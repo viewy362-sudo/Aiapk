@@ -236,6 +236,53 @@ fun ShieldDashboardScreen(
             }
 
             item {
+                val rootClean = runtime?.rootArtifactsDetected?.isEmpty() ?: true
+                SecurityLayerCard(
+                    title = "7. Root & Magisk Shield",
+                    subtitle = "su binary, Magisk & test-keys check",
+                    statusLabel = if (rootClean) "CLEAN" else "ROOTED",
+                    isVerified = rootClean,
+                    icon = Icons.Rounded.Security,
+                    detailLine = if (rootClean) "No su / Magisk artifacts detected" else "Detected: ${runtime?.rootArtifactsDetected?.joinToString()}"
+                )
+            }
+
+            item {
+                val notEmu = runtime?.isEmulatorEnvironment == false
+                SecurityLayerCard(
+                    title = "8. Emulator & Virtual-Clone Shield",
+                    subtitle = "Hardware fingerprint & multi-user path check",
+                    statusLabel = if (notEmu) "REAL HW" else "EMULATOR",
+                    isVerified = notEmu,
+                    icon = Icons.Rounded.VerifiedUser,
+                    detailLine = if (notEmu) "Physical device fingerprint verified" else "Virtual/Emulator runtime detected"
+                )
+            }
+
+            item {
+                val netClean = runtime?.isProxyOrVpnActive == false
+                SecurityLayerCard(
+                    title = "9. SSL Pinning & Proxy/VPN Block",
+                    subtitle = "HTTP proxy & tun0/ppp0 sniffer check",
+                    statusLabel = if (netClean) "DIRECT" else "PROXY/VPN",
+                    isVerified = netClean,
+                    icon = Icons.Rounded.Lock,
+                    detailLine = if (netClean) "No active MITM proxy or VPN tunnel" else "Active proxy or VPN interface detected"
+                )
+            }
+
+            item {
+                SecurityLayerCard(
+                    title = "10. Screenshot & Tapjacking Shield",
+                    subtitle = "FLAG_SECURE & obscured touch filter generator",
+                    statusLabel = if (profile.screenTapjackingShield) "ARMED" else "OFF",
+                    isVerified = profile.screenTapjackingShield,
+                    icon = Icons.Rounded.HealthAndSafety,
+                    detailLine = "Exports FLAG_SECURE + setFilterTouchesWhenObscured(true) guard"
+                )
+            }
+
+            item {
                 Spacer(modifier = Modifier.height(12.dp))
             }
         }

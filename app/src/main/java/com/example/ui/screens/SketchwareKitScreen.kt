@@ -52,6 +52,7 @@ fun SketchwareKitScreen(
 
     val guardJava = remember(profile) { SketchwareKitGenerator.generateSketchwareJavaGuard(profile) }
     val assetJava = remember(profile) { SketchwareKitGenerator.generateAssetVaultHelperJava(profile) }
+    val sslJava = remember(profile) { SketchwareKitGenerator.generateSslPinningJava(profile) }
     val proguardRules = remember(profile) { SketchwareKitGenerator.generateProguardRules(profile) }
 
     Box(
@@ -152,46 +153,70 @@ fun SketchwareKitScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = "Mandatory Security Layers",
+                            text = "10 Security & Obfuscation Layers",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.secondary
                         )
 
                         LayerToggleRow(
-                            label = "DEX Bytecode & 65K Method Guard",
+                            label = "1. DEX Bytecode & 65K Method Guard",
                             checked = profile.dexBytecodeGuard,
                             testTag = "toggle_layer_dex",
                             onCheckedChange = { c -> onUpdateProfile { it.copy(dexBytecodeGuard = c) } }
                         )
                         LayerToggleRow(
-                            label = "Asset & Resource AES-256-GCM",
+                            label = "2. Asset & Resource AES-256-GCM",
                             checked = profile.assetAes256Encryption,
                             testTag = "toggle_layer_asset",
                             onCheckedChange = { c -> onUpdateProfile { it.copy(assetAes256Encryption = c) } }
                         )
                         LayerToggleRow(
-                            label = "Anti-Tamper & Signature Verification",
+                            label = "3. Anti-Tamper & Signature Verification",
                             checked = profile.antiTamperSignature,
                             testTag = "toggle_layer_tamper",
                             onCheckedChange = { c -> onUpdateProfile { it.copy(antiTamperSignature = c) } }
                         )
                         LayerToggleRow(
-                            label = "Anti-Debug & Frida Hook Shield",
+                            label = "4. Anti-Debug & Frida Hook Shield",
                             checked = profile.antiDebugFridaShield,
                             testTag = "toggle_layer_antidebug",
                             onCheckedChange = { c -> onUpdateProfile { it.copy(antiDebugFridaShield = c) } }
                         )
                         LayerToggleRow(
-                            label = "String & Metadata Obfuscation",
+                            label = "5. String & Metadata Obfuscation",
                             checked = profile.stringMetadataObfuscation,
                             testTag = "toggle_layer_obfuscate",
                             onCheckedChange = { c -> onUpdateProfile { it.copy(stringMetadataObfuscation = c) } }
                         )
                         LayerToggleRow(
-                            label = "Zero-Crash Exception Guard",
+                            label = "6. Zero-Crash Exception Guard",
                             checked = profile.zeroCrashExceptionGuard,
                             testTag = "toggle_layer_zerocrash",
                             onCheckedChange = { c -> onUpdateProfile { it.copy(zeroCrashExceptionGuard = c) } }
+                        )
+                        LayerToggleRow(
+                            label = "7. Root & Magisk Shield",
+                            checked = profile.rootMagiskDetection,
+                            testTag = "toggle_layer_root",
+                            onCheckedChange = { c -> onUpdateProfile { it.copy(rootMagiskDetection = c) } }
+                        )
+                        LayerToggleRow(
+                            label = "8. Emulator & Virtual-Clone Blocker",
+                            checked = profile.emulatorCloneShield,
+                            testTag = "toggle_layer_emulator",
+                            onCheckedChange = { c -> onUpdateProfile { it.copy(emulatorCloneShield = c) } }
+                        )
+                        LayerToggleRow(
+                            label = "9. SSL Pinning & Proxy/VPN Block",
+                            checked = profile.sslPinningProxyBlock,
+                            testTag = "toggle_layer_ssl",
+                            onCheckedChange = { c -> onUpdateProfile { it.copy(sslPinningProxyBlock = c) } }
+                        )
+                        LayerToggleRow(
+                            label = "10. Screenshot & Tapjacking Shield",
+                            checked = profile.screenTapjackingShield,
+                            testTag = "toggle_layer_screen",
+                            onCheckedChange = { c -> onUpdateProfile { it.copy(screenTapjackingShield = c) } }
                         )
                     }
                 }
@@ -221,7 +246,7 @@ fun SketchwareKitScreen(
 
             item {
                 MonospaceCodePanel(
-                    title = "DexShieldGuard.java (Sketchware Custom Class)",
+                    title = "DexShieldGuard.java (10-Layer Guard)",
                     code = guardJava,
                     copyTestTag = "copy_dexshield_guard_java_button",
                     onCopied = { onCopiedNotice("Copied DexShieldGuard.java") }
@@ -234,6 +259,15 @@ fun SketchwareKitScreen(
                     code = assetJava,
                     copyTestTag = "copy_asset_vault_java_button",
                     onCopied = { onCopiedNotice("Copied AssetVaultHelper.java") }
+                )
+            }
+
+            item {
+                MonospaceCodePanel(
+                    title = "SslPinningGuard.java (SPKI Cert Pinning)",
+                    code = sslJava,
+                    copyTestTag = "copy_ssl_pinning_java_button",
+                    onCopied = { onCopiedNotice("Copied SslPinningGuard.java") }
                 )
             }
 

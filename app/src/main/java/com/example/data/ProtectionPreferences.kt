@@ -27,6 +27,10 @@ class ProtectionPreferences(private val context: Context) {
         val LAYER_ANTIDEBUG = booleanPreferencesKey("layer_antidebug")
         val LAYER_OBFUSCATE = booleanPreferencesKey("layer_obfuscate")
         val LAYER_ZEROCRASH = booleanPreferencesKey("layer_zerocrash")
+        val LAYER_ROOT = booleanPreferencesKey("layer_root_magisk")
+        val LAYER_EMULATOR = booleanPreferencesKey("layer_emulator_clone")
+        val LAYER_SSL_PROXY = booleanPreferencesKey("layer_ssl_proxy")
+        val LAYER_SCREEN_SECURE = booleanPreferencesKey("layer_screen_secure")
     }
 
     val profileFlow: Flow<ProtectionProfile> = context.protectionDataStore.data.map { prefs ->
@@ -39,7 +43,11 @@ class ProtectionPreferences(private val context: Context) {
             antiTamperSignature = prefs[Keys.LAYER_TAMPER] ?: true,
             antiDebugFridaShield = prefs[Keys.LAYER_ANTIDEBUG] ?: true,
             stringMetadataObfuscation = prefs[Keys.LAYER_OBFUSCATE] ?: true,
-            zeroCrashExceptionGuard = prefs[Keys.LAYER_ZEROCRASH] ?: true
+            zeroCrashExceptionGuard = prefs[Keys.LAYER_ZEROCRASH] ?: true,
+            rootMagiskDetection = prefs[Keys.LAYER_ROOT] ?: true,
+            emulatorCloneShield = prefs[Keys.LAYER_EMULATOR] ?: true,
+            sslPinningProxyBlock = prefs[Keys.LAYER_SSL_PROXY] ?: true,
+            screenTapjackingShield = prefs[Keys.LAYER_SCREEN_SECURE] ?: true
         )
     }
 
@@ -54,6 +62,10 @@ class ProtectionPreferences(private val context: Context) {
             prefs[Keys.LAYER_ANTIDEBUG] = profile.antiDebugFridaShield
             prefs[Keys.LAYER_OBFUSCATE] = profile.stringMetadataObfuscation
             prefs[Keys.LAYER_ZEROCRASH] = profile.zeroCrashExceptionGuard
+            prefs[Keys.LAYER_ROOT] = profile.rootMagiskDetection
+            prefs[Keys.LAYER_EMULATOR] = profile.emulatorCloneShield
+            prefs[Keys.LAYER_SSL_PROXY] = profile.sslPinningProxyBlock
+            prefs[Keys.LAYER_SCREEN_SECURE] = profile.screenTapjackingShield
         }
     }
 }

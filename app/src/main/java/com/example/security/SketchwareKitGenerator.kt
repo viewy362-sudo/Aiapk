@@ -1,70 +1,74 @@
 package com.example.security
 
-data class ProtectionProfile(
-    val appName: String = "BLOODY TEAM",
-    val packageName: String = "com.bloodyteam.app",
-    val expectedSignatureSha256: String = "",
-    val dexBytecodeGuard: Boolean = true,
-    val assetAes256Encryption: Boolean = true,
-    val antiTamperSignature: Boolean = true,
-    val antiDebugFridaShield: Boolean = true,
-    val stringMetadataObfuscation: Boolean = true,
-    val zeroCrashExceptionGuard: Boolean = true
-) {
-    val enabledLayersCount: Int
-        get() = listOf(
-            dexBytecodeGuard,
-            assetAes256Encryption,
-            antiTamperSignature,
-            antiDebugFridaShield,
-            stringMetadataObfuscation,
-            zeroCrashExceptionGuard
-        ).count { it }
-}
-
 /**
- * Generates Sketchware Pro / Custom Android Toolchain compatible Java classes and R8 rules.
- * Zero external library dependencies; safe for Dalvik (API 21+) and ART (API 24..36).
+ * Generates Sketchware Pro / Custom Android Toolchain compatible Java classes and R8 rules
+ * for all 10 security layers. Zero external library dependencies; safe for Dalvik & ART (API 21 - 36).
  */
 object SketchwareKitGenerator {
 
-    fun generateSketchwareJavaGuard(profile: ProtectionProfile): String {
+    fun generateSketchwareJavaGuard(
+        profile: ProtectionProfile,
+        expectedDexSha256: String = ""
+    ): String {
         val safeSha = profile.expectedSignatureSha256.ifBlank { "REPLACE_WITH_YOUR_SHA256_FINGERPRINT" }
+        val safeDex = expectedDexSha256.ifBlank { "" }
         return """
             |// ==========================================================
-            |// DexShield Security Guard for ${profile.appName}
+            |// DexShield 10-Layer Security Guard for ${profile.appName}
             |// Target Package: ${profile.packageName}
             |// Compatible: Sketchware Pro / Dalvik & ART (API 21 - 36)
             |// ==========================================================
             |package ${profile.packageName}.security;
             |
+            |import android.app.Activity;
             |import android.content.Context;
             |import android.content.pm.PackageInfo;
             |import android.content.pm.PackageManager;
             |import android.content.pm.Signature;
             |import android.os.Build;
             |import android.os.Debug;
+            |import android.view.View;
+            |import android.view.WindowManager;
             |import java.io.BufferedReader;
             |import java.io.File;
             |import java.io.FileReader;
+            |import java.io.InputStream;
+            |import java.net.NetworkInterface;
             |import java.security.MessageDigest;
+            |import java.util.Enumeration;
+            |import java.util.zip.ZipEntry;
+            |import java.util.zip.ZipFile;
             |
             |public final class DexShieldGuard {
             |    private static final String EXPECTED_SHA256 = "$safeSha";
+            |    private static final String EXPECTED_DEX_SHA256 = "$safeDex";
             |
             |    private DexShieldGuard() {}
             |
-            |    public static void activateAll(final Context context) {
+            |    public static void activateAll(final Activity activity) {
             |        ${if (profile.zeroCrashExceptionGuard) "installZeroCrashHandler();" else "// Zero-Crash Guard disabled"}
-            |        if (!verifyEnvironment(context)) {
-            |            throw new SecurityException("Integrity verification failed");
+            |        ${if (profile.screenTapjackingShield) "applyWindowSecurity(activity);" else "// Window security disabled"}
+            |        if (!verifyEnvironment(activity.getApplicationContext())) {
+            |            throw new SecurityException("DexShield integrity verification failed");
             |        }
+            |    }
+            |
+            |    public static void applyWindowSecurity(final Activity activity) {
+            |        try {
+            |            activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+            |            View decor = activity.getWindow().getDecorView();
+            |            if (decor != null) decor.setFilterTouchesWhenObscured(true);
+            |        } catch (Throwable ignored) {}
             |    }
             |
             |    public static boolean verifyEnvironment(final Context context) {
             |        try {
             |            ${if (profile.antiDebugFridaShield) "if (isDebuggerOrHookPresent()) return false;" else ""}
             |            ${if (profile.antiTamperSignature) "if (!verifySigningCertificate(context)) return false;" else ""}
+            |            ${if (profile.dexBytecodeGuard) "if (!verifyPrimaryDexIntegrity(context)) return false;" else ""}
+            |            ${if (profile.rootMagiskDetection) "if (isRootedOrMagisk()) return false;" else ""}
+            |            ${if (profile.emulatorCloneShield) "if (isEmulatorOrCloned(context)) return false;" else ""}
+            |            ${if (profile.sslPinningProxyBlock) "if (isProxyOrVpnActive()) return false;" else ""}
             |            return true;
             |        } catch (Throwable ignored) {
             |            return false;
@@ -78,7 +82,7 @@ object SketchwareKitGenerator {
             |            @Override
             |            public void uncaughtException(Thread t, Throwable e) {
             |                if (t.getId() != android.os.Looper.getMainLooper().getThread().getId()) {
-            |                    return; // Absorb background thread fault without crashing UI
+            |                    return;
             |                }
             |                if (fallback != null) fallback.uncaughtException(t, e);
             |            }
@@ -86,6 +90,7 @@ object SketchwareKitGenerator {
             |    }
             |
             |    private static boolean verifySigningCertificate(final Context context) {
+            |        if (EXPECTED_SHA256.startsWith("REPLACE_")) return true;
             |        try {
             |            PackageManager pm = context.getPackageManager();
             |            Signature[] sigs;
@@ -115,6 +120,30 @@ object SketchwareKitGenerator {
             |        }
             |    }
             |
+            |    private static boolean verifyPrimaryDexIntegrity(final Context context) {
+            |        if (EXPECTED_DEX_SHA256.isEmpty()) return true;
+            |        ZipFile zip = null;
+            |        try {
+            |            zip = new ZipFile(context.getApplicationInfo().sourceDir);
+            |            ZipEntry dex = zip.getEntry("classes.dex");
+            |            if (dex == null) return false;
+            |            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            |            InputStream in = zip.getInputStream(dex);
+            |            byte[] buf = new byte[8192];
+            |            int r;
+            |            while ((r = in.read(buf)) != -1) md.update(buf, 0, r);
+            |            in.close();
+            |            byte[] d = md.digest();
+            |            StringBuilder hex = new StringBuilder();
+            |            for (int i = 0; i < 8 && i < d.length; i++) hex.append(String.format("%02X", d[i]));
+            |            return EXPECTED_DEX_SHA256.equalsIgnoreCase(hex.toString());
+            |        } catch (Throwable t) {
+            |            return false;
+            |        } finally {
+            |            try { if (zip != null) zip.close(); } catch (Throwable ignored) {}
+            |        }
+            |    }
+            |
             |    private static boolean isDebuggerOrHookPresent() {
             |        if (Debug.isDebuggerConnected() || Debug.waitingForDebugger()) return true;
             |        BufferedReader reader = null;
@@ -136,6 +165,39 @@ object SketchwareKitGenerator {
             |        } finally {
             |            try { if (reader != null) reader.close(); } catch (Throwable ignored) {}
             |        }
+            |        return false;
+            |    }
+            |
+            |    private static boolean isRootedOrMagisk() {
+            |        String tags = Build.TAGS;
+            |        if (tags != null && tags.contains("test-keys")) return true;
+            |        String[] paths = {"/system/bin/su", "/system/xbin/su", "/sbin/su", "/sbin/.magisk", "/data/adb/magisk"};
+            |        for (String p : paths) {
+            |            if (new File(p).exists()) return true;
+            |        }
+            |        return false;
+            |    }
+            |
+            |    private static boolean isEmulatorOrCloned(final Context context) {
+            |        String fp = Build.FINGERPRINT.toLowerCase();
+            |        String model = Build.MODEL.toLowerCase();
+            |        if (fp.contains("generic") || fp.contains("vbox") || model.contains("emulator")) return true;
+            |        String dataPath = context.getFilesDir().getAbsolutePath().toLowerCase();
+            |        return dataPath.contains("virtual") || dataPath.contains("parallel") || dataPath.contains("/999/");
+            |    }
+            |
+            |    private static boolean isProxyOrVpnActive() {
+            |        if (System.getProperty("http.proxyHost") != null) return true;
+            |        try {
+            |            Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces();
+            |            while (en != null && en.hasMoreElements()) {
+            |                NetworkInterface nif = en.nextElement();
+            |                if (nif.isUp()) {
+            |                    String n = nif.getName().toLowerCase();
+            |                    if (n.startsWith("tun") || n.startsWith("ppp")) return true;
+            |                }
+            |            }
+            |        } catch (Throwable ignored) {}
             |        return false;
             |    }
             |}
@@ -203,6 +265,40 @@ object SketchwareKitGenerator {
         """.trimMargin()
     }
 
+    fun generateSslPinningJava(profile: ProtectionProfile): String {
+        return """
+            |// SSL / TLS Certificate Pinning Helper for ${profile.appName}
+            |package ${profile.packageName}.security;
+            |
+            |import java.net.URL;
+            |import java.security.MessageDigest;
+            |import java.security.cert.Certificate;
+            |import javax.net.ssl.HttpsURLConnection;
+            |
+            |public final class SslPinningGuard {
+            |    private SslPinningGuard() {}
+            |
+            |    public static HttpsURLConnection openPinnedConnection(String urlStr, String expectedPinHex) throws Exception {
+            |        HttpsURLConnection conn = (HttpsURLConnection) new URL(urlStr).openConnection();
+            |        conn.connect();
+            |        Certificate[] certs = conn.getServerCertificates();
+            |        if (certs == null || certs.length == 0) {
+            |            conn.disconnect();
+            |            throw new SecurityException("No server certificates");
+            |        }
+            |        byte[] spkiHash = MessageDigest.getInstance("SHA-256").digest(certs[0].getPublicKey().getEncoded());
+            |        StringBuilder hex = new StringBuilder();
+            |        for (byte b : spkiHash) hex.append(String.format("%02X", b));
+            |        if (!expectedPinHex.equalsIgnoreCase(hex.toString())) {
+            |            conn.disconnect();
+            |            throw new SecurityException("SSL Pinning mismatch");
+            |        }
+            |        return conn;
+            |    }
+            |}
+        """.trimMargin()
+    }
+
     fun generateProguardRules(profile: ProtectionProfile): String {
         return """
             |# ==========================================================
@@ -215,7 +311,7 @@ object SketchwareKitGenerator {
             |-optimizationpasses 3
             |-overloadaggressively
             |
-            |# Prevent Dalvik 65K method index overflow via class merging
+            |# Prevent Dalvik 65K method index overflow
             |-optimizations !code/allocation/variable
             |
             |# Strip all runtime debug & diagnostic logging
@@ -227,9 +323,11 @@ object SketchwareKitGenerator {
             |    public static int w(...);
             |}
             |
-            |# Preserve Entry Points & Guard
+            |# Preserve Security Entry Points
             |-keep class ${profile.packageName}.security.DexShieldGuard { public *; }
             |-keep class ${profile.packageName}.security.AssetVaultHelper { public *; }
+            |-keep class ${profile.packageName}.security.SslPinningGuard { public *; }
+            |-keep class ${profile.packageName}.security.StringVault { public *; }
             |-keepclassmembers class * extends android.app.Activity {
             |    public void *(android.view.View);
             |}

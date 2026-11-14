@@ -11,10 +11,12 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.EnhancedEncryption
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Code
+import androidx.compose.material.icons.rounded.EnhancedEncryption
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -47,6 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.screens.AssetVaultScreen
 import com.example.ui.screens.ObfuscatorScreen
+import com.example.ui.screens.ProtectorStudioScreen
 import com.example.ui.screens.ShieldDashboardScreen
 import com.example.ui.screens.SketchwareKitScreen
 import kotlinx.coroutines.launch
@@ -57,10 +60,11 @@ enum class ShieldTab(
     val unselectedIcon: ImageVector,
     val testTag: String
 ) {
-    SHIELD("Shield", Icons.Rounded.Shield, Icons.Outlined.Shield, "nav_tab_shield"),
+    PROTECT("Protect", Icons.Rounded.EnhancedEncryption, Icons.Outlined.EnhancedEncryption, "nav_tab_protect"),
+    SHIELD("Audit", Icons.Rounded.Shield, Icons.Outlined.Shield, "nav_tab_shield"),
     VAULT("Vault", Icons.Rounded.Lock, Icons.Outlined.Lock, "nav_tab_vault"),
-    LAB("Obfuscate", Icons.Rounded.Code, Icons.Outlined.Code, "nav_tab_obfuscate"),
-    KIT("Sketchware", Icons.Rounded.Build, Icons.Outlined.Build, "nav_tab_kit")
+    LAB("Lab", Icons.Rounded.Code, Icons.Outlined.Code, "nav_tab_obfuscate"),
+    KIT("Kit", Icons.Rounded.Build, Icons.Outlined.Build, "nav_tab_kit")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,7 +72,7 @@ enum class ShieldTab(
 fun DexShieldApp(
     viewModel: DexShieldViewModel = viewModel()
 ) {
-    var currentTab by rememberSaveable { mutableStateOf(ShieldTab.SHIELD) }
+    var currentTab by rememberSaveable { mutableStateOf(ShieldTab.PROTECT) }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val faultLog by viewModel.faultLog.collectAsStateWithLifecycle()
@@ -78,8 +82,8 @@ fun DexShieldApp(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    BackHandler(enabled = currentTab != ShieldTab.SHIELD) {
-        currentTab = ShieldTab.SHIELD
+    BackHandler(enabled = currentTab != ShieldTab.PROTECT) {
+        currentTab = ShieldTab.PROTECT
     }
 
     LaunchedEffect(uiState.statusToast) {
@@ -167,6 +171,18 @@ fun DexShieldApp(
 
                 Box(modifier = Modifier.weight(1f).fillMaxSize()) {
                     when (currentTab) {
+                        ShieldTab.PROTECT -> ProtectorStudioScreen(
+                            uiState = uiState,
+                            profile = profile,
+                            onPickInputArchive = viewModel::selectInputArchive,
+                            onLoadSelfApk = viewModel::loadSelfApkAsInput,
+                            onUpdateProfile = viewModel::updateProfile,
+                            onSelectAllLayers = viewModel::selectAllSecurityLayers,
+                            onAdoptDeviceCert = viewModel::adoptCurrentDeviceCert,
+                            onUpdateProtectorInputs = viewModel::updateProtectorInputs,
+                            onRunProtection = viewModel::runProtectionPipeline,
+                            onSaveProtectedOutput = viewModel::saveProtectedArtifactToUri
+                        )
                         ShieldTab.SHIELD -> ShieldDashboardScreen(
                             uiState = uiState,
                             profile = profile,

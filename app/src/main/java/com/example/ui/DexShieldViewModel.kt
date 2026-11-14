@@ -3,14 +3,17 @@ package com.example.ui
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.ProtectionPreferences
 import com.example.security.ApkInspectionReport
+import com.example.security.AppProtectorPipeline
 import com.example.security.CryptoVaultEngine
 import com.example.security.DexApkInspector
 import com.example.security.GuardedFault
 import com.example.security.ObfuscatedStringResult
+import com.example.security.ProtectedBuildArtifact
 import com.example.security.ProtectionProfile
 import com.example.security.RuntimeIntegrityShield
 import com.example.security.RuntimeShieldReport
@@ -27,6 +30,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 enum class VaultBinaryMode { ENCRYPT, DECRYPT }
 
@@ -43,6 +47,15 @@ data class ShieldUiState(
     val isAuditing: Boolean = false,
     val runtimeReport: RuntimeShieldReport? = null,
     val apkReport: ApkInspectionReport? = null,
+    val selectedInputUri: Uri? = null,
+    val selectedInputName: String = "",
+    val selectedInputInspection: ApkInspectionReport? = null,
+    val protectorPassphrase: String = "DexShield#2026!Vault",
+    val protectorSecretKey: String = "sk_live_protected_token_2026",
+    val isProtecting: Boolean = false,
+    val protectionSteps: List<String> = emptyList(),
+    val protectedOutput: ProtectedBuildArtifact? = null,
+    val protectorError: String? = null,
     val plainVaultInput: String = "{\n  \"team\": \"BLOODY TEAM\",\n  \"apiEndpoint\": \"https://api.example.invalid/v2\",\n  \"antiTamper\": true\n}",
     val vaultPassphrase: String = "DexShield#2026!Key",
     val vaultCipherText: String = "",
@@ -109,8 +122,176 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                 it.copy(
                     isAuditing = false,
                     apkReport = report,
-                    statusToast = "Inspected $displayName (${report.dexReports.size} DEX)"
+                    selectedInputUri = uri,
+                    selectedInputName = displayName,
+                    selectedInputInspection = report,
+                    protectedOutput = null,
+                    protectorError = null,
+                    statusToast = "Loaded $displayName (${report.dexReports.size} DEX)"
                 )
+            }
+        }
+    }
+
+    fun selectInputArchive(uri: Uri) {
+        viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
+            val ctx = getApplication<Application>().applicationContext
+            val displayName = resolveDisplayName(uri) ?: "input_app.apk"
+            _uiState.update { it.copy(isAuditing = true, protectorError = null) }
+            val report = withContext(Dispatchers.IO) {
+                DexApkInspector.inspectUri(ctx, uri, displayName)
+            }
+            _uiState.update {
+                it.copy(
+                    isAuditing = false,
+                    selectedInputUri = uri,
+                    selectedInputName = displayName,
+                    selectedInputInspection = report,
+                    protectedOutput = null,
+                    protectionSteps = emptyList(),
+                    statusToast = "Selected $displayName"
+                )
+            }
+        }
+    }
+
+    fun loadSelfApkAsInput() {
+        viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
+            val ctx = getApplication<Application>().applicationContext
+            _uiState.update { it.copy(isAuditing = true, protectorError = null) }
+            val selfFile = File(ctx.applicationInfo.sourceDir)
+            val cachedCopy = withContext(Dispatchers.IO) {
+                val target = File(ctx.cacheDir, "DexShield_base.apk")
+                selfFile.copyTo(target, overwrite = true)
+                target
+            }
+            val uri = Uri.fromFile(cachedCopy)
+            val report = withContext(Dispatchers.IO) {
+                DexApkInspector.inspectUri(ctx, uri, "DexShield_base.apk")
+            }
+            _uiState.update {
+                it.copy(
+                    isAuditing = false,
+                    selectedInputUri = uri,
+                    selectedInputName = "DexShield_base.apk",
+                    selectedInputInspection = report,
+                    protectedOutput = null,
+                    protectionSteps = emptyList(),
+                    statusToast = "Loaded current APK as input"
+                )
+            }
+        }
+    }
+
+    fun updateProtectorInputs(passphrase: String, secretKey: String) {
+        _uiState.update {
+            it.copy(
+                protectorPassphrase = passphrase,
+                protectorSecretKey = secretKey,
+                protectorError = null
+            )
+        }
+    }
+
+    fun selectAllSecurityLayers(enabled: Boolean) {
+        updateProfile {
+            it.copy(
+                dexBytecodeGuard = enabled,
+                assetAes256Encryption = enabled,
+                antiTamperSignature = enabled,
+                antiDebugFridaShield = enabled,
+                stringMetadataObfuscation = enabled,
+                zeroCrashExceptionGuard = enabled,
+                rootMagiskDetection = enabled,
+                emulatorCloneShield = enabled,
+                sslPinningProxyBlock = enabled,
+                screenTapjackingShield = enabled
+            )
+        }
+    }
+
+    fun runProtectionPipeline() {
+        val state = _uiState.value
+        val inputUri = state.selectedInputUri
+        if (inputUri == null) {
+            _uiState.update { it.copy(protectorError = "Select an .apk or .zip application first") }
+            return
+        }
+        if (state.protectorPassphrase.isBlank()) {
+            _uiState.update { it.copy(protectorError = "Enter an AES-256 master passphrase") }
+            return
+        }
+        val activeProfile = profile.value
+        if (activeProfile.enabledLayersCount == 0) {
+            _uiState.update { it.copy(protectorError = "Enable at least 1 security protection layer") }
+            return
+        }
+
+        viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
+            _uiState.update {
+                it.copy(
+                    isProtecting = true,
+                    protectorError = null,
+                    protectedOutput = null,
+                    protectionSteps = listOf("Initializing DexShield Protection Engine...")
+                )
+            }
+            try {
+                val ctx = getApplication<Application>().applicationContext
+                val result = withContext(Dispatchers.IO) {
+                    AppProtectorPipeline.protectArchive(
+                        context = ctx,
+                        inputUri = inputUri,
+                        inputFileName = state.selectedInputName,
+                        profile = activeProfile,
+                        passphrase = state.protectorPassphrase,
+                        secretToHide = state.protectorSecretKey,
+                        onStep = { step ->
+                            _uiState.update { cur ->
+                                cur.copy(protectionSteps = cur.protectionSteps + step)
+                            }
+                        }
+                    )
+                }
+                _uiState.update {
+                    it.copy(
+                        isProtecting = false,
+                        protectedOutput = result,
+                        statusToast = "Protected output ready: ${result.suggestedOutputName}"
+                    )
+                }
+            } catch (t: Throwable) {
+                ZeroCrashGuard.recordFault("AppProtectorPipeline", Thread.currentThread().name, t)
+                _uiState.update {
+                    it.copy(
+                        isProtecting = false,
+                        protectorError = "Protection failed: ${t.message ?: "Invalid archive"}"
+                    )
+                }
+            }
+        }
+    }
+
+    fun saveProtectedArtifactToUri(destUri: Uri) {
+        val artifact = _uiState.value.protectedOutput ?: return
+        viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
+            try {
+                val ctx = getApplication<Application>().applicationContext
+                withContext(Dispatchers.IO) {
+                    ctx.contentResolver.openOutputStream(destUri)?.use { out ->
+                        artifact.outputCacheFile.inputStream().use { input ->
+                            input.copyTo(out)
+                        }
+                        out.flush()
+                    } ?: throw IllegalStateException("Cannot open destination URI")
+                }
+                _uiState.update {
+                    it.copy(statusToast = "Saved ${artifact.suggestedOutputName}")
+                }
+            } catch (t: Throwable) {
+                _uiState.update {
+                    it.copy(protectorError = "Save failed: ${t.message}")
+                }
             }
         }
     }
@@ -305,6 +486,8 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
             appendLine(SketchwareKitGenerator.generateSketchwareJavaGuard(p))
             appendLine()
             appendLine(SketchwareKitGenerator.generateAssetVaultHelperJava(p))
+            appendLine()
+            appendLine(SketchwareKitGenerator.generateSslPinningJava(p))
             appendLine()
             appendLine(SketchwareKitGenerator.generateProguardRules(p))
         }

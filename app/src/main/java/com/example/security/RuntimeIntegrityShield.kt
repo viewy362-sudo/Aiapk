@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Debug
 import java.io.File
+import java.net.NetworkInterface
 import java.security.MessageDigest
 
 data class RuntimeShieldReport(
@@ -17,6 +18,9 @@ data class RuntimeShieldReport(
     val tracerPid: Int,
     val fridaArtifactsDetected: List<String>,
     val xposedDetected: Boolean,
+    val rootArtifactsDetected: List<String>,
+    val isEmulatorEnvironment: Boolean,
+    val isProxyOrVpnActive: Boolean,
     val antiTamperPassed: Boolean,
     val antiDebugPassed: Boolean,
     val hookShieldPassed: Boolean
@@ -24,16 +28,18 @@ data class RuntimeShieldReport(
     val activeShieldScore: Int
         get() {
             var score = 0
-            if (signingCertSha256.isNotEmpty() && signingCertSha256 != "UNAVAILABLE") score += 34
-            if (antiDebugPassed) score += 33
-            if (hookShieldPassed) score += 33
+            if (signingCertSha256.isNotEmpty() && signingCertSha256 != "UNAVAILABLE") score += 25
+            if (antiDebugPassed) score += 25
+            if (hookShieldPassed) score += 25
+            if (rootArtifactsDetected.isEmpty()) score += 15
+            if (!isProxyOrVpnActive) score += 10
             return score.coerceIn(0, 100)
         }
 }
 
 /**
- * Layers 3 & 4: Real Anti-Tamper Signature Verification + Anti-Debug & Frida Hook Shield.
- * Fully compatible with Dalvik and ART across API 24..36 without root or dangerous permissions.
+ * Live Runtime Integrity Shield covering Signature Verification, Anti-Debug,
+ * Frida/Xposed Hook Detection, Root/Magisk, Emulator/Clone, and Proxy/VPN checks.
  */
 object RuntimeIntegrityShield {
 
@@ -51,6 +57,15 @@ object RuntimeIntegrityShield {
         }
         val xposedHit = ZeroCrashGuard.runGuarded("RuntimeIntegrityShield.xposed", false) {
             detectXposedStackOrArtifacts()
+        }
+        val rootHits = ZeroCrashGuard.runGuarded("RuntimeIntegrityShield.root", emptyList()) {
+            detectRootOrMagisk()
+        }
+        val emulator = ZeroCrashGuard.runGuarded("RuntimeIntegrityShield.emulator", false) {
+            detectEmulatorEnvironment()
+        }
+        val proxyOrVpn = ZeroCrashGuard.runGuarded("RuntimeIntegrityShield.proxy", false) {
+            detectProxyOrVpn()
         }
 
         val vmVersion = System.getProperty("java.vm.version") ?: "2.1"
@@ -70,6 +85,9 @@ object RuntimeIntegrityShield {
             tracerPid = tracerPid,
             fridaArtifactsDetected = fridaHits,
             xposedDetected = xposedHit,
+            rootArtifactsDetected = rootHits,
+            isEmulatorEnvironment = emulator,
+            isProxyOrVpnActive = proxyOrVpn,
             antiTamperPassed = antiTamperOk,
             antiDebugPassed = antiDebugOk,
             hookShieldPassed = hookShieldOk
@@ -145,5 +163,54 @@ object RuntimeIntegrityShield {
         } catch (_: Throwable) {
             false
         }
+    }
+
+    private fun detectRootOrMagisk(): List<String> {
+        val hits = mutableListOf<String>()
+        if (Build.TAGS?.contains("test-keys") == true) {
+            hits.add("test-keys")
+        }
+        val paths = listOf(
+            "/system/bin/su",
+            "/system/xbin/su",
+            "/sbin/su",
+            "/data/local/xbin/su",
+            "/system/app/Superuser.apk",
+            "/sbin/.magisk",
+            "/data/adb/magisk"
+        )
+        for (p in paths) {
+            if (File(p).exists()) hits.add(p)
+        }
+        return hits
+    }
+
+    private fun detectEmulatorEnvironment(): Boolean {
+        val fp = Build.FINGERPRINT.lowercase()
+        val model = Build.MODEL.lowercase()
+        val hw = Build.HARDWARE.lowercase()
+        val prod = Build.PRODUCT.lowercase()
+        return fp.contains("generic") ||
+            fp.contains("vbox") ||
+            model.contains("google_sdk") ||
+            model.contains("emulator") ||
+            model.contains("android sdk built for") ||
+            hw.contains("goldfish") ||
+            hw.contains("ranchu") ||
+            prod.contains("sdk_gphone")
+    }
+
+    private fun detectProxyOrVpn(): Boolean {
+        val proxyHost = System.getProperty("http.proxyHost") ?: System.getProperty("https.proxyHost")
+        if (!proxyHost.isNullOrBlank()) return true
+        val interfaces = NetworkInterface.getNetworkInterfaces() ?: return false
+        while (interfaces.hasMoreElements()) {
+            val nif = interfaces.nextElement()
+            if (nif.isUp) {
+                val name = nif.name.lowercase()
+                if (name.startsWith("tun") || name.startsWith("ppp")) return true
+            }
+        }
+        return false
     }
 }
