@@ -27,6 +27,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.InputStream;
+import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.NetworkInterface;
@@ -47,7 +48,8 @@ import dalvik.system.InMemoryDexClassLoader;
 /**
  * Compiled Runtime Stub Application injected into protected APKs by Bloody Team.
  * Executes active environment guards, unpacks disguised AES-256-GCM DEX payloads in RAM,
- * hands off ClassLoader via reflection, and enforces Activity-level runtime policies.
+ * injects dexElements & swaps ClassLoader via reflection, and enforces Activity-level runtime policies
+ * cleanly without sudden unexplained crashes.
  */
 public class BloodyStubApplication extends Application {
 
@@ -58,6 +60,10 @@ public class BloodyStubApplication extends Application {
     private boolean toastShown = false;
     private boolean loginVerified = false;
     private boolean crashGuardArmed = false;
+    private String pendingEnvBlockReason = null;
+    private boolean blockDialogShown = false;
+    private boolean netDialogShowing = false;
+    private boolean loginDialogShowing = false;
 
     @Override
     protected void attachBaseContext(Context base) {
@@ -83,20 +89,21 @@ public class BloodyStubApplication extends Application {
                 armZeroCrashGuard();
             }
 
+            // Hard reverse-engineering shields: abort before decrypting DEX into RAM
             if (antiDebug && isDebuggerOrHookPresent()) {
                 abortSecurity("Debugger or Hook (Frida/Xposed) detected");
             }
             if (antiTamper && !expectedSha.isEmpty() && !verifyCertSha256(base, expectedSha)) {
                 abortSecurity("APK Signature verification failed");
             }
+
+            // Environment policy shields: flag cleanly so Activity can display a clear notice dialog
             if (antiRoot && isRootedOrMagisk()) {
-                abortSecurity("Root or Magisk environment detected");
-            }
-            if (antiEmu && isEmulatorOrCloned(base)) {
-                abortSecurity("Emulator or Virtual Cloner detected");
-            }
-            if ((antiVpn || detectSniffer) && isProxyVpnOrSnifferPresent(base, antiVpn, detectSniffer)) {
-                abortSecurity("Proxy, VPN, or Packet Sniffer detected");
+                pendingEnvBlockReason = "Root or Magisk environment detected by Bloody Team Shield.";
+            } else if (antiEmu && isEmulatorOrCloned(base)) {
+                pendingEnvBlockReason = "Emulator or Virtual Cloner blocked by Bloody Team Shield.";
+            } else if ((antiVpn || detectSniffer) && isProxyVpnOrSnifferPresent(base, antiVpn, detectSniffer)) {
+                pendingEnvBlockReason = "Active VPN, Proxy, or Packet Sniffer detected by Bloody Team Shield.";
             }
 
             boolean packDex = policyJson.optBoolean("dexBytecodeGuard", true);
@@ -108,6 +115,8 @@ public class BloodyStubApplication extends Application {
                     loadEncryptedDexPayloads(base, packedCount, disguiseExt, passphrase);
                 }
             }
+        } catch (SecurityException se) {
+            throw se;
         } catch (Throwable t) {
             if (!crashGuardArmed) {
                 throw new RuntimeException("BloodyStub init failed: " + t.getMessage(), t);
@@ -119,7 +128,9 @@ public class BloodyStubApplication extends Application {
     public void onCreate() {
         super.onCreate();
         registerActivityPolicies();
-        handoverToOriginalApplication();
+        if (pendingEnvBlockReason == null) {
+            handoverToOriginalApplication();
+        }
     }
 
     private void loadEncryptedDexPayloads(
@@ -148,38 +159,57 @@ public class BloodyStubApplication extends Application {
             return;
         }
 
-        ClassLoader parent = base.getClassLoader();
+        ClassLoader baseLoader = base.getClassLoader();
         ClassLoader loader;
-        if (Build.VERSION.SDK_INT >= 26) {
+        if (Build.VERSION.SDK_INT >= 27) {
             ByteBuffer[] buffers = new ByteBuffer[plainDexList.size()];
             for (int i = 0; i < plainDexList.size(); i++) {
                 buffers[i] = ByteBuffer.wrap(plainDexList.get(i));
             }
-            loader = new InMemoryDexClassLoader(buffers, parent);
+            loader = new InMemoryDexClassLoader(buffers, baseLoader);
+        } else if (Build.VERSION.SDK_INT == 26) {
+            // API 26 only provides single-ByteBuffer InMemoryDexClassLoader(ByteBuffer, ClassLoader)
+            ClassLoader chain = baseLoader;
+            for (int i = plainDexList.size() - 1; i >= 0; i--) {
+                chain = new InMemoryDexClassLoader(ByteBuffer.wrap(plainDexList.get(i)), chain);
+            }
+            loader = chain;
         } else {
             File codeCache = new File(base.getCacheDir(), "bt_dx");
             if (!codeCache.exists()) codeCache.mkdirs();
             StringBuilder pathJoin = new StringBuilder();
             List<File> tempFiles = new ArrayList<>();
-            for (int i = 0; i < plainDexList.size(); i++) {
-                File f = new File(codeCache, "m_" + i + ".dex");
-                FileOutputStream fos = new FileOutputStream(f);
-                fos.write(plainDexList.get(i));
-                fos.close();
-                tempFiles.add(f);
-                if (i > 0) pathJoin.append(File.pathSeparator);
-                pathJoin.append(f.getAbsolutePath());
-            }
-            File optDir = new File(codeCache, "opt");
-            if (!optDir.exists()) optDir.mkdirs();
-            loader = new DexClassLoader(pathJoin.toString(), optDir.getAbsolutePath(), base.getApplicationInfo().nativeLibraryDir, parent);
-            for (File f : tempFiles) {
-                f.delete();
+            try {
+                for (int i = 0; i < plainDexList.size(); i++) {
+                    File f = new File(codeCache, "m_" + i + ".dex");
+                    FileOutputStream fos = new FileOutputStream(f);
+                    try {
+                        fos.write(plainDexList.get(i));
+                    } finally {
+                        fos.close();
+                    }
+                    tempFiles.add(f);
+                    if (i > 0) pathJoin.append(File.pathSeparator);
+                    pathJoin.append(f.getAbsolutePath());
+                }
+                File optDir = new File(codeCache, "opt");
+                if (!optDir.exists()) optDir.mkdirs();
+                loader = new DexClassLoader(
+                        pathJoin.toString(),
+                        optDir.getAbsolutePath(),
+                        base.getApplicationInfo().nativeLibraryDir,
+                        baseLoader
+                );
+            } finally {
+                for (File f : tempFiles) {
+                    try { f.delete(); } catch (Throwable ignored) {}
+                }
             }
         }
 
         unpackedClassLoader = loader;
         swapLoadedApkClassLoader(base, loader);
+        injectDexElementsIntoBaseLoader(baseLoader, loader);
         Thread.currentThread().setContextClassLoader(loader);
     }
 
@@ -189,6 +219,48 @@ public class BloodyStubApplication extends Application {
             if (packageInfo != null) {
                 setFieldRecursive(packageInfo, "mClassLoader", newLoader);
             }
+        } catch (Throwable ignored) {}
+    }
+
+    /**
+     * Merges decrypted dexElements into the base PathClassLoader as a safety fallback
+     * so components resolved against the initial ClassLoader never throw ClassNotFoundException.
+     */
+    private void injectDexElementsIntoBaseLoader(ClassLoader baseLoader, ClassLoader decryptedLoader) {
+        try {
+            Object basePathList = getFieldRecursive(baseLoader, "pathList");
+            if (basePathList == null) return;
+            Object baseElements = getFieldRecursive(basePathList, "dexElements");
+            if (baseElements == null) return;
+
+            List<Object> extraElementsList = new ArrayList<>();
+            ClassLoader cursor = decryptedLoader;
+            while (cursor != null && cursor != baseLoader) {
+                Object decPathList = getFieldRecursive(cursor, "pathList");
+                if (decPathList != null) {
+                    Object decElements = getFieldRecursive(decPathList, "dexElements");
+                    if (decElements != null && decElements.getClass().isArray()) {
+                        int len = Array.getLength(decElements);
+                        for (int i = 0; i < len; i++) {
+                            extraElementsList.add(Array.get(decElements, i));
+                        }
+                    }
+                }
+                cursor = cursor.getParent();
+            }
+
+            if (extraElementsList.isEmpty()) return;
+            int baseLen = Array.getLength(baseElements);
+            int extraLen = extraElementsList.size();
+            Class<?> elemType = baseElements.getClass().getComponentType();
+            Object combined = Array.newInstance(elemType, extraLen + baseLen);
+            for (int i = 0; i < extraLen; i++) {
+                Array.set(combined, i, extraElementsList.get(i));
+            }
+            for (int i = 0; i < baseLen; i++) {
+                Array.set(combined, extraLen + i, Array.get(baseElements, i));
+            }
+            setFieldRecursive(basePathList, "dexElements", combined);
         } catch (Throwable ignored) {}
     }
 
@@ -232,11 +304,17 @@ public class BloodyStubApplication extends Application {
         } catch (Throwable ignored) {}
     }
 
+    private static boolean isActivityValid(Activity activity) {
+        if (activity == null || activity.isFinishing()) return false;
+        if (Build.VERSION.SDK_INT >= 17 && activity.isDestroyed()) return false;
+        return true;
+    }
+
     private void registerActivityPolicies() {
         if (policyJson == null) return;
         final boolean flagSecure = policyJson.optBoolean("screenTapjackingShield", false);
         final boolean showToast = policyJson.optBoolean("customSecurityToast", false);
-        final String toastText = policyJson.optString("customToastMessage", "Protected by Bloody Team");
+        final String toastText = policyJson.optString("customToastMessage", "Secured by Bloody Team");
         final boolean checkNet = policyJson.optBoolean("checkInternetRequired", false);
         final boolean loginGate = policyJson.optBoolean("loginValidateGate", false);
         final boolean cancelable = policyJson.optBoolean("dialogCancelable", false);
@@ -244,7 +322,7 @@ public class BloodyStubApplication extends Application {
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
             @Override
             public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
-                if (flagSecure) {
+                if (flagSecure && activity != null && activity.getWindow() != null) {
                     try {
                         activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
                         View decor = activity.getWindow().getDecorView();
@@ -258,45 +336,98 @@ public class BloodyStubApplication extends Application {
 
             @Override
             public void onActivityResumed(final Activity activity) {
-                if (showToast && !toastShown) {
+                if (!isActivityValid(activity)) return;
+
+                if (pendingEnvBlockReason != null) {
+                    if (!blockDialogShown) {
+                        blockDialogShown = true;
+                        try {
+                            new AlertDialog.Builder(activity)
+                                    .setTitle("Bloody Team Security Shield")
+                                    .setMessage(pendingEnvBlockReason)
+                                    .setCancelable(false)
+                                    .setPositiveButton("Exit", new DialogInterface.OnClickListener() {
+                                        @Override
+                                        public void onClick(DialogInterface dialog, int which) {
+                                            activity.finishAffinity();
+                                            Process.killProcess(Process.myPid());
+                                        }
+                                    })
+                                    .show();
+                        } catch (Throwable ignored) {
+                            activity.finishAffinity();
+                        }
+                    }
+                    return;
+                }
+
+                if (showToast && !toastShown && toastText != null && !toastText.trim().isEmpty()) {
                     toastShown = true;
-                    Toast.makeText(activity, toastText, Toast.LENGTH_SHORT).show();
+                    try {
+                        Toast.makeText(activity.getApplicationContext(), toastText, Toast.LENGTH_SHORT).show();
+                    } catch (Throwable ignored) {}
                 }
-                if (checkNet && !isNetworkOnline(activity)) {
-                    new AlertDialog.Builder(activity)
-                            .setTitle("Connection Required")
-                            .setMessage("Active internet connection is required to verify security policy.")
-                            .setCancelable(cancelable)
-                            .setPositiveButton("Retry", new DialogInterface.OnClickListener() {
-                                @Override
-                                public void onClick(DialogInterface dialog, int which) {
-                                    if (!isNetworkOnline(activity) && !cancelable) {
-                                        activity.finishAffinity();
+
+                if (checkNet && !isNetworkOnline(activity) && !netDialogShowing) {
+                    netDialogShowing = true;
+                    try {
+                        new AlertDialog.Builder(activity)
+                                .setTitle("Connection Required")
+                                .setMessage("Active internet connection is required to verify security policy.")
+                                .setCancelable(cancelable)
+                                .setPositiveButton("Retry", new DialogInterface.OnClickListener() {
+                                    @Override
+                                    public void onClick(DialogInterface dialog, int which) {
+                                        netDialogShowing = false;
+                                        if (!isNetworkOnline(activity) && !cancelable && isActivityValid(activity)) {
+                                            activity.finishAffinity();
+                                        }
                                     }
-                                }
-                            })
-                            .show();
+                                })
+                                .setOnDismissListener(new DialogInterface.OnDismissListener() {
+                                    @Override
+                                    public void onDismiss(DialogInterface dialog) {
+                                        netDialogShowing = false;
+                                    }
+                                })
+                                .show();
+                    } catch (Throwable ignored) {
+                        netDialogShowing = false;
+                    }
                 }
-                if (loginGate && !loginVerified) {
-                    final EditText input = new EditText(activity);
-                    input.setHint("Enter Access Token");
-                    new AlertDialog.Builder(activity)
-                            .setTitle("Bloody Team Access Gate")
-                            .setMessage("Verification required before launching protected activity.")
-                            .setView(input)
-                            .setCancelable(cancelable)
-                            .setPositiveButton("Verify", new DialogInterface.OnClickListener() {
-                                @Override
-                                public void onClick(DialogInterface dialog, int which) {
-                                    String val = input.getText().toString().trim();
-                                    if (!val.isEmpty()) {
-                                        loginVerified = true;
-                                    } else if (!cancelable) {
-                                        activity.finishAffinity();
+
+                if (loginGate && !loginVerified && !loginDialogShowing) {
+                    loginDialogShowing = true;
+                    try {
+                        final EditText input = new EditText(activity);
+                        input.setHint("Enter Access Token");
+                        new AlertDialog.Builder(activity)
+                                .setTitle("Bloody Team Access Gate")
+                                .setMessage("Verification required before launching protected activity.")
+                                .setView(input)
+                                .setCancelable(cancelable)
+                                .setPositiveButton("Verify", new DialogInterface.OnClickListener() {
+                                    @Override
+                                    public void onClick(DialogInterface dialog, int which) {
+                                        loginDialogShowing = false;
+                                        String val = input.getText().toString().trim();
+                                        if (!val.isEmpty()) {
+                                            loginVerified = true;
+                                        } else if (!cancelable && isActivityValid(activity)) {
+                                            activity.finishAffinity();
+                                        }
                                     }
-                                }
-                            })
-                            .show();
+                                })
+                                .setOnDismissListener(new DialogInterface.OnDismissListener() {
+                                    @Override
+                                    public void onDismiss(DialogInterface dialog) {
+                                        loginDialogShowing = false;
+                                    }
+                                })
+                                .show();
+                    } catch (Throwable ignored) {
+                        loginDialogShowing = false;
+                    }
                 }
             }
 
@@ -373,15 +504,19 @@ public class BloodyStubApplication extends Application {
     private static boolean verifyCertSha256(Context ctx, String expected) {
         try {
             PackageManager pm = ctx.getPackageManager();
-            Signature[] sigs;
+            Signature[] sigs = null;
             if (Build.VERSION.SDK_INT >= 28) {
                 PackageInfo pi = pm.getPackageInfo(ctx.getPackageName(), PackageManager.GET_SIGNING_CERTIFICATES);
-                sigs = pi.signingInfo.hasMultipleSigners()
-                        ? pi.signingInfo.getApkContentsSigners()
-                        : pi.signingInfo.getSigningCertificateHistory();
+                if (pi != null && pi.signingInfo != null) {
+                    sigs = pi.signingInfo.hasMultipleSigners()
+                            ? pi.signingInfo.getApkContentsSigners()
+                            : pi.signingInfo.getSigningCertificateHistory();
+                }
             } else {
                 PackageInfo pi = pm.getPackageInfo(ctx.getPackageName(), PackageManager.GET_SIGNATURES);
-                sigs = pi.signatures;
+                if (pi != null) {
+                    sigs = pi.signatures;
+                }
             }
             if (sigs == null || sigs.length == 0) return false;
             byte[] d = MessageDigest.getInstance("SHA-256").digest(sigs[0].toByteArray());

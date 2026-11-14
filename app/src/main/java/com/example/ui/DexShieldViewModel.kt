@@ -7,8 +7,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.SoundFxManager
 import com.example.data.ProtectionPreferences
+import com.example.security.ApkCompatibilityAnalyzer
 import com.example.security.ApkInspectionReport
 import com.example.security.AppProtectorPipeline
+import com.example.security.CompatibilityWarning
 import com.example.security.CryptoVaultEngine
 import com.example.security.DexApkInspector
 import com.example.security.DexPackerEngine
@@ -64,6 +66,9 @@ data class ShieldUiState(
     val selectedInputUri: Uri? = null,
     val selectedInputName: String = "",
     val selectedInputInspection: ApkInspectionReport? = null,
+    val detectedAppCategory: String = "",
+    val autoProfileSummary: List<String> = emptyList(),
+    val compatibilityWarnings: List<CompatibilityWarning> = emptyList(),
     val protectorPassphrase: String = "BloodyTeam#2026!Key",
     val protectorSecretKey: String = "sk_live_bloody_team_token_2026",
     val isProtecting: Boolean = false,
@@ -142,9 +147,8 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
             val report = withContext(Dispatchers.IO) {
                 DexApkInspector.inspectUri(ctx, uri, displayName)
             }
-            if (report.detectedPackageName.isNotBlank()) {
-                updateProfile { it.copy(packageName = report.detectedPackageName) }
-            }
+            val autoResult = ApkCompatibilityAnalyzer.recommendProfile(report, profile.value)
+            prefs.saveProfile(autoResult.recommendedProfile)
             _uiState.update {
                 it.copy(
                     isAuditing = false,
@@ -152,9 +156,12 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                     selectedInputUri = uri,
                     selectedInputName = displayName,
                     selectedInputInspection = report,
+                    detectedAppCategory = autoResult.appCategoryTitle,
+                    autoProfileSummary = autoResult.appliedReasons,
+                    compatibilityWarnings = autoResult.warnings,
                     protectedOutput = null,
                     protectorError = null,
-                    statusToast = "Loaded $displayName (${report.dexReports.size} DEX)"
+                    statusToast = "Auto-selected ${autoResult.recommendedProfile.enabledLayersCount}/10 layers for $displayName"
                 )
             }
             SoundFxManager.playSuccessChime()
@@ -170,18 +177,20 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
             val report = withContext(Dispatchers.IO) {
                 DexApkInspector.inspectUri(ctx, uri, displayName)
             }
-            if (report.detectedPackageName.isNotBlank()) {
-                updateProfile { it.copy(packageName = report.detectedPackageName) }
-            }
+            val autoResult = ApkCompatibilityAnalyzer.recommendProfile(report, profile.value)
+            prefs.saveProfile(autoResult.recommendedProfile)
             _uiState.update {
                 it.copy(
                     isAuditing = false,
                     selectedInputUri = uri,
                     selectedInputName = displayName,
                     selectedInputInspection = report,
+                    detectedAppCategory = autoResult.appCategoryTitle,
+                    autoProfileSummary = autoResult.appliedReasons,
+                    compatibilityWarnings = autoResult.warnings,
                     protectedOutput = null,
                     protectionSteps = emptyList(),
-                    statusToast = "Selected $displayName"
+                    statusToast = "Auto-checked ${autoResult.recommendedProfile.enabledLayersCount}/10 safe shields for ${autoResult.appCategoryTitle}"
                 )
             }
             SoundFxManager.playSuccessChime()
@@ -203,22 +212,47 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
             val report = withContext(Dispatchers.IO) {
                 DexApkInspector.inspectUri(ctx, uri, "BloodyTeam_base.apk")
             }
-            if (report.detectedPackageName.isNotBlank()) {
-                updateProfile { it.copy(packageName = report.detectedPackageName) }
-            }
+            val autoResult = ApkCompatibilityAnalyzer.recommendProfile(report, profile.value)
+            prefs.saveProfile(autoResult.recommendedProfile)
             _uiState.update {
                 it.copy(
                     isAuditing = false,
                     selectedInputUri = uri,
                     selectedInputName = "BloodyTeam_base.apk",
                     selectedInputInspection = report,
+                    detectedAppCategory = autoResult.appCategoryTitle,
+                    autoProfileSummary = autoResult.appliedReasons,
+                    compatibilityWarnings = autoResult.warnings,
                     protectedOutput = null,
                     protectionSteps = emptyList(),
-                    statusToast = "Loaded current APK as input"
+                    statusToast = "Loaded APK & auto-selected ${autoResult.recommendedProfile.enabledLayersCount}/10 shields"
                 )
             }
             SoundFxManager.playSuccessChime()
         }
+    }
+
+    fun reapplySmartAutoProfile() {
+        val report = _uiState.value.selectedInputInspection ?: return
+        SoundFxManager.playSuccessChime()
+        viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
+            val autoResult = ApkCompatibilityAnalyzer.recommendProfile(report, profile.value)
+            prefs.saveProfile(autoResult.recommendedProfile)
+            _uiState.update {
+                it.copy(
+                    detectedAppCategory = autoResult.appCategoryTitle,
+                    autoProfileSummary = autoResult.appliedReasons,
+                    compatibilityWarnings = autoResult.warnings,
+                    statusToast = "Re-applied Smart Auto profile (${autoResult.recommendedProfile.enabledLayersCount}/10)"
+                )
+            }
+        }
+    }
+
+    fun applyWarningFix(fixTransform: (ProtectionProfile) -> ProtectionProfile) {
+        SoundFxManager.playToggle(true)
+        updateProfile(fixTransform)
+        _uiState.update { it.copy(statusToast = "Applied safe crash-free setting") }
     }
 
     fun updateProtectorInputs(passphrase: String, secretKey: String) {
@@ -643,7 +677,16 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun updateProfile(transform: (ProtectionProfile) -> ProtectionProfile) {
         viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
-            prefs.saveProfile(transform(profile.value))
+            val next = transform(profile.value)
+            prefs.saveProfile(next)
+            _uiState.update { cur ->
+                cur.copy(
+                    compatibilityWarnings = ApkCompatibilityAnalyzer.analyzeWarnings(
+                        report = cur.selectedInputInspection,
+                        profile = next
+                    )
+                )
+            }
         }
     }
 

@@ -307,6 +307,8 @@ fun DexShieldApp(
                                     onLoadSelfApk = viewModel::loadSelfApkAsInput,
                                     onUpdateProfile = viewModel::updateProfile,
                                     onApplyWallTier = viewModel::applyWallTier,
+                                    onReapplySmartAuto = viewModel::reapplySmartAutoProfile,
+                                    onApplyWarningFix = viewModel::applyWarningFix,
                                     onOpenThemeStudio = {
                                         SoundFxManager.playClick()
                                         showThemeStudio = true

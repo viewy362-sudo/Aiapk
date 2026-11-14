@@ -327,6 +327,64 @@ class SecurityEnginesUnitTest {
     }
 
     @Test
+    fun smartCompatibilityAnalyzerAutoSelectsAndWarns() {
+        val base = ProtectionProfile()
+
+        // 1. Standard Android APK with INTERNET and assets
+        val standardReport = com.example.security.ApkInspectionReport(
+            sourceLabel = "app.apk",
+            totalArchiveSizeBytes = 1024_000L,
+            totalEntries = 50,
+            dexReports = listOf(
+                com.example.security.DexFileReport("classes.dex", "DEX 038", 50_000L, 100, 50, 1200, 80, "AABB1122", true)
+            ),
+            assetEntriesCount = 4,
+            encryptedAssetCount = 0,
+            nativeLibArchitectures = listOf("arm64-v8a"),
+            hasManifest = true,
+            hasSignatureBlock = true,
+            detectedPackageName = "com.demo.standard",
+            usesPermissions = listOf("android.permission.INTERNET"),
+            isApkArchive = true,
+            detectedFramework = "Standard Java/Kotlin APK",
+            dataFileEntriesCount = 2,
+            summaryMessage = "Standard Java/Kotlin APK verified"
+        )
+        val stdRes = com.example.security.ApkCompatibilityAnalyzer.recommendProfile(standardReport, base)
+        assertTrue(stdRes.recommendedProfile.dexBytecodeGuard)
+        assertTrue(stdRes.recommendedProfile.nativeJniStubPacking)
+        assertTrue(stdRes.recommendedProfile.assetAes256Encryption)
+        assertTrue(stdRes.recommendedProfile.zeroCrashExceptionGuard)
+        assertFalse(stdRes.recommendedProfile.emulatorCloneShield)
+
+        // 2. VPN APK must auto-disable Check VPN, and warn CRITICAL if user re-enables it
+        val vpnReport = standardReport.copy(
+            sourceLabel = "my_vpn.apk",
+            usesPermissions = listOf("android.permission.INTERNET", "android.permission.BIND_VPN_SERVICE")
+        )
+        val vpnRes = com.example.security.ApkCompatibilityAnalyzer.recommendProfile(vpnReport, base)
+        assertFalse("Check VPN must be auto-disabled for VPN apps", vpnRes.recommendedProfile.sslPinningProxyBlock)
+        val vpnForcedWarnings = com.example.security.ApkCompatibilityAnalyzer.analyzeWarnings(
+            vpnReport,
+            vpnRes.recommendedProfile.copy(sslPinningProxyBlock = true)
+        )
+        assertTrue(vpnForcedWarnings.any { it.severity == com.example.security.WarningSeverity.CRITICAL })
+
+        // 3. Flutter / Already Packed APKs must auto-disable Stub DEX replacement to prevent crash
+        val flutterReport = standardReport.copy(
+            sourceLabel = "flutter_app.apk",
+            detectedFramework = "Flutter Engine APK"
+        )
+        val flRes = com.example.security.ApkCompatibilityAnalyzer.recommendProfile(flutterReport, base)
+        assertFalse(flRes.recommendedProfile.nativeJniStubPacking)
+        val flWarnings = com.example.security.ApkCompatibilityAnalyzer.analyzeWarnings(
+            flutterReport,
+            flRes.recommendedProfile.copy(dexBytecodeGuard = true, nativeJniStubPacking = true)
+        )
+        assertTrue(flWarnings.any { it.severity == com.example.security.WarningSeverity.CRITICAL && it.fixTransform != null })
+    }
+
+    @Test
     fun zeroCrashGuardAbsorbsWorkerFaultWithoutCrashing() {
         ZeroCrashGuard.clearLogs()
         ZeroCrashGuard.install()

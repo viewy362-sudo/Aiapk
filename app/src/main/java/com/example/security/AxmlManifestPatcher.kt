@@ -8,12 +8,15 @@ data class AxmlManifestInfo(
     val packageName: String,
     val originalApplicationClass: String,
     val versionName: String,
-    val isValidBinaryAxml: Boolean
+    val isValidBinaryAxml: Boolean,
+    val appComponentFactory: String = "",
+    val usesPermissions: List<String> = emptyList(),
+    val isDebuggable: Boolean = false
 )
 
 /**
  * Pure-Kotlin Android Binary XML (AXML) Inspector & Manifest Patcher.
- * Reads packageName + original Application class from compiled AndroidManifest.xml
+ * Reads packageName, permissions, and original Application class from compiled AndroidManifest.xml
  * and patches <application android:name="..."> to launch BloodyStubApplication first.
  */
 object AxmlManifestPatcher {
@@ -28,6 +31,7 @@ object AxmlManifestPatcher {
     private const val TYPE_CDATA = 0x0104
 
     private const val ATTR_ANDROID_NAME = 0x01010003
+    private const val ATTR_ANDROID_DEBUGGABLE = 0x0101000f
     private const val ATTR_ANDROID_VERSION_NAME = 0x0101021c
     private const val ATTR_APP_COMPONENT_FACTORY = 0x0101057a
     private const val ANDROID_NS_URI = "http://schemas.android.com/apk/res/android"
@@ -49,26 +53,45 @@ object AxmlManifestPatcher {
         var pkg = ""
         var origApp = ""
         var verName = ""
+        var compFactory = ""
+        var debuggable = false
+        val perms = LinkedHashSet<String>()
 
         for (node in parsed.nodes) {
             if (node.type == TYPE_START_ELEMENT) {
                 val elemName = parsed.strings.getOrNull(node.elemNameIdx).orEmpty()
-                if (elemName == "manifest") {
-                    for (attr in node.attributes) {
-                        val aName = parsed.strings.getOrNull(attr.nameIdx).orEmpty()
-                        val resId = parsed.resourceIds.getOrNull(attr.nameIdx) ?: 0
-                        if (aName == "package" && resId == 0 && attr.dataType == TYPE_STRING_VALUE) {
-                            pkg = parsed.strings.getOrNull(attr.data).orEmpty()
-                        } else if (resId == ATTR_ANDROID_VERSION_NAME && attr.dataType == TYPE_STRING_VALUE) {
-                            verName = parsed.strings.getOrNull(attr.data).orEmpty()
+                when (elemName) {
+                    "manifest" -> {
+                        for (attr in node.attributes) {
+                            val aName = parsed.strings.getOrNull(attr.nameIdx).orEmpty()
+                            val resId = parsed.resourceIds.getOrNull(attr.nameIdx) ?: 0
+                            if (aName == "package" && resId == 0 && attr.dataType == TYPE_STRING_VALUE) {
+                                pkg = parsed.strings.getOrNull(attr.data).orEmpty()
+                            } else if (resId == ATTR_ANDROID_VERSION_NAME && attr.dataType == TYPE_STRING_VALUE) {
+                                verName = parsed.strings.getOrNull(attr.data).orEmpty()
+                            }
                         }
                     }
-                } else if (elemName == "application") {
-                    for (attr in node.attributes) {
-                        val resId = parsed.resourceIds.getOrNull(attr.nameIdx) ?: 0
-                        if (resId == ATTR_ANDROID_NAME && attr.dataType == TYPE_STRING_VALUE) {
-                            val raw = parsed.strings.getOrNull(attr.data).orEmpty()
-                            origApp = resolveClassName(pkg, raw)
+                    "uses-permission", "uses-permission-sdk-23" -> {
+                        for (attr in node.attributes) {
+                            val resId = parsed.resourceIds.getOrNull(attr.nameIdx) ?: 0
+                            if (resId == ATTR_ANDROID_NAME && attr.dataType == TYPE_STRING_VALUE) {
+                                val p = parsed.strings.getOrNull(attr.data).orEmpty()
+                                if (p.isNotBlank()) perms.add(p)
+                            }
+                        }
+                    }
+                    "application" -> {
+                        for (attr in node.attributes) {
+                            val resId = parsed.resourceIds.getOrNull(attr.nameIdx) ?: 0
+                            if (resId == ATTR_ANDROID_NAME && attr.dataType == TYPE_STRING_VALUE) {
+                                val raw = parsed.strings.getOrNull(attr.data).orEmpty()
+                                origApp = resolveClassName(pkg, raw)
+                            } else if (resId == ATTR_APP_COMPONENT_FACTORY && attr.dataType == TYPE_STRING_VALUE) {
+                                compFactory = parsed.strings.getOrNull(attr.data).orEmpty()
+                            } else if (resId == ATTR_ANDROID_DEBUGGABLE) {
+                                debuggable = attr.data != 0
+                            }
                         }
                     }
                 }
@@ -79,7 +102,10 @@ object AxmlManifestPatcher {
             packageName = pkg,
             originalApplicationClass = origApp,
             versionName = verName,
-            isValidBinaryAxml = true
+            isValidBinaryAxml = true,
+            appComponentFactory = compFactory,
+            usesPermissions = perms.toList(),
+            isDebuggable = debuggable
         )
     }
 
@@ -127,12 +153,13 @@ object AxmlManifestPatcher {
             }
         }
 
-        // Append fallback framework AppComponentFactory class name if needed
-        var appFactoryFallbackIdx = -1
-
         // Patch <application> element attributes
         for (node in nodes) {
             if (node.type == TYPE_START_ELEMENT && strings.getOrNull(node.elemNameIdx) == "application") {
+                val idAttrRef = if (node.idIndex in 1..node.attributes.size) node.attributes[node.idIndex - 1] else null
+                val clsAttrRef = if (node.classIndex in 1..node.attributes.size) node.attributes[node.classIndex - 1] else null
+                val styAttrRef = if (node.styleIndex in 1..node.attributes.size) node.attributes[node.styleIndex - 1] else null
+
                 val nameAttr = node.attributes.firstOrNull { resIds.getOrNull(it.nameIdx) == ATTR_ANDROID_NAME }
                 if (nameAttr != null) {
                     nameAttr.rawValueIdx = stubStrIdx
@@ -149,27 +176,19 @@ object AxmlManifestPatcher {
                         data = stubStrIdx
                     )
                     node.attributes.add(newAttr)
-                    node.attributes.sortWith(compareBy { a ->
-                        val id = resIds.getOrNull(a.nameIdx) ?: Int.MAX_VALUE
-                        if (id == 0) Int.MAX_VALUE else id
-                    })
                 }
 
-                // Neutralize custom AppComponentFactory (e.g. CoreComponentFactory) since original classes.dex is packed
-                val factoryAttr = node.attributes.firstOrNull { resIds.getOrNull(it.nameIdx) == ATTR_APP_COMPONENT_FACTORY }
-                if (factoryAttr != null) {
-                    if (appFactoryFallbackIdx < 0) {
-                        appFactoryFallbackIdx = strings.indexOf("android.app.AppComponentFactory").let { idx ->
-                            if (idx >= 0) idx else {
-                                strings.add("android.app.AppComponentFactory")
-                                strings.size - 1
-                            }
-                        }
-                    }
-                    factoryAttr.rawValueIdx = appFactoryFallbackIdx
-                    factoryAttr.dataType = TYPE_STRING_VALUE
-                    factoryAttr.data = appFactoryFallbackIdx
-                }
+                // Remove custom AppComponentFactory (e.g. CoreComponentFactory) since original classes.dex is packed
+                node.attributes.removeAll { resIds.getOrNull(it.nameIdx) == ATTR_APP_COMPONENT_FACTORY }
+
+                node.attributes.sortWith(compareBy { a ->
+                    val id = resIds.getOrNull(a.nameIdx) ?: Int.MAX_VALUE
+                    if (id == 0) Int.MAX_VALUE else id
+                })
+
+                node.idIndex = if (idAttrRef != null) node.attributes.indexOf(idAttrRef) + 1 else 0
+                node.classIndex = if (clsAttrRef != null) node.attributes.indexOf(clsAttrRef) + 1 else 0
+                node.styleIndex = if (styAttrRef != null) node.attributes.indexOf(styAttrRef) + 1 else 0
             }
         }
 

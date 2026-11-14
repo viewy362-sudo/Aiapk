@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,9 +34,13 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.EnhancedEncryption
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.FolderZip
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.SaveAlt
+import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.VerifiedUser
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -50,6 +55,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,6 +64,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -67,9 +74,13 @@ import com.example.R
 import com.example.audio.SoundFxManager
 import com.example.security.ProtectionProfile
 import com.example.security.WallProtectionTier
+import com.example.security.WarningSeverity
 import com.example.ui.ShieldUiState
 import com.example.ui.components.StatusPill
 import com.example.ui.theme.JetBrainsMonoFamily
+
+private const val YOUTUBE_CHANNEL_URL = "https://youtube.com/@howtomakeinjector?si=x_oDekn8iZqGbJRM"
+private const val TELEGRAM_CHANNEL_URL = "https://t.me/BLOODYTEAMOFFICIAL"
 
 @Composable
 fun ProtectorStudioScreen(
@@ -79,6 +90,8 @@ fun ProtectorStudioScreen(
     onLoadSelfApk: () -> Unit,
     onUpdateProfile: ((ProtectionProfile) -> ProtectionProfile) -> Unit,
     onApplyWallTier: (WallProtectionTier) -> Unit,
+    onReapplySmartAuto: () -> Unit,
+    onApplyWarningFix: ((ProtectionProfile) -> ProtectionProfile) -> Unit,
     onOpenThemeStudio: () -> Unit,
     onRandomTheme: () -> Unit,
     onSelectAllLayers: (Boolean) -> Unit,
@@ -89,6 +102,7 @@ fun ProtectorStudioScreen(
     onSaveCompanionKit: (Uri) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
 
     val inputPicker = rememberLauncherForActivityResult(
@@ -296,17 +310,133 @@ fun ProtectorStudioScreen(
                                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "Loaded: ${uiState.selectedInputName}",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    color = MaterialTheme.colorScheme.secondary
+                                                )
+                                                Text(
+                                                    text = "${info.detectedFramework} • Size: ${info.totalArchiveSizeBytes / 1024} KB",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                            }
+                                            FilledTonalButton(
+                                                onClick = {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    onReapplySmartAuto()
+                                                },
+                                                modifier = Modifier
+                                                    .height(40.dp)
+                                                    .testTag("smart_auto_reapply_button")
+                                            ) {
+                                                Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Smart Auto", maxLines = 1)
+                                            }
+                                        }
                                         Text(
-                                            text = "Loaded: ${uiState.selectedInputName}",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = MaterialTheme.colorScheme.secondary
-                                        )
-                                        Text(
-                                            text = "Size: ${info.totalArchiveSizeBytes / 1024} KB • Entries: ${info.totalEntries} • DEX: ${info.dexReports.size} • Assets: ${info.assetEntriesCount}",
-                                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = JetBrainsMonoFamily),
+                                            text = "DEX: ${info.dexReports.size} • Assets: ${info.assetEntriesCount} • Data files: ${info.dataFileEntriesCount} • Perms: ${info.usesPermissions.size}",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFamily),
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
+                                        if (uiState.autoProfileSummary.isNotEmpty()) {
+                                            Text(
+                                                text = "Auto-Selected Safe Checkmarks:",
+                                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            uiState.autoProfileSummary.forEach { reason ->
+                                                Text(
+                                                    text = "• $reason",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Live Crash-Safety & Compatibility Warnings
+            if (uiState.compatibilityWarnings.isNotEmpty()) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        uiState.compatibilityWarnings.forEachIndexed { idx, warn ->
+                            val containerColor = when (warn.severity) {
+                                WarningSeverity.CRITICAL -> MaterialTheme.colorScheme.errorContainer
+                                WarningSeverity.WARNING -> MaterialTheme.colorScheme.tertiaryContainer
+                                WarningSeverity.INFO -> MaterialTheme.colorScheme.secondaryContainer
+                            }
+                            val contentColor = when (warn.severity) {
+                                WarningSeverity.CRITICAL -> MaterialTheme.colorScheme.onErrorContainer
+                                WarningSeverity.WARNING -> MaterialTheme.colorScheme.onTertiaryContainer
+                                WarningSeverity.INFO -> MaterialTheme.colorScheme.onSecondaryContainer
+                            }
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = containerColor,
+                                border = BorderStroke(1.dp, contentColor.copy(alpha = 0.35f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("compatibility_warning_$idx")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (warn.severity == WarningSeverity.INFO) {
+                                            Icons.Rounded.Info
+                                        } else {
+                                            Icons.Rounded.WarningAmber
+                                        },
+                                        contentDescription = null,
+                                        tint = contentColor
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = warn.title,
+                                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                            color = contentColor
+                                        )
+                                        Text(
+                                            text = warn.detail,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = contentColor
+                                        )
+                                    }
+                                    val fix = warn.fixTransform
+                                    val actionLabel = warn.actionLabel
+                                    if (fix != null && actionLabel != null) {
+                                        TextButton(
+                                            onClick = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                onApplyWarningFix(fix)
+                                            },
+                                            modifier = Modifier.testTag("warning_fix_button_$idx")
+                                        ) {
+                                            Text(
+                                                text = actionLabel,
+                                                color = contentColor,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -680,6 +810,75 @@ fun ProtectorStudioScreen(
                                         Text("Save Developer Kit (${out.suggestedKitName})")
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Official Community Channels (YouTube & Telegram)
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "Bloody Team Official Channels",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Tutorials, updates & community support from @BLOODYTEAMOFFICIAL.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            FilledTonalButton(
+                                onClick = {
+                                    SoundFxManager.playClick()
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(YOUTUBE_CHANNEL_URL))
+                                        )
+                                    }
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("youtube_channel_button")
+                            ) {
+                                Icon(Icons.Rounded.PlayCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("YouTube", maxLines = 1)
+                            }
+                            FilledTonalButton(
+                                onClick = {
+                                    SoundFxManager.playClick()
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(TELEGRAM_CHANNEL_URL))
+                                        )
+                                    }
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("telegram_channel_button")
+                            ) {
+                                Icon(Icons.Rounded.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Telegram", maxLines = 1)
                             }
                         }
                     }

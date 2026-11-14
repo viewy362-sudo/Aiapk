@@ -44,7 +44,7 @@ data class ProtectionProfile(
     val stringMetadataObfuscation: Boolean = true,
     val zeroCrashExceptionGuard: Boolean = true,
     val rootMagiskDetection: Boolean = true,
-    val emulatorCloneShield: Boolean = true,
+    val emulatorCloneShield: Boolean = false,
     val sslPinningProxyBlock: Boolean = true,
     val screenTapjackingShield: Boolean = true,
     val nativeJniStubPacking: Boolean = true,

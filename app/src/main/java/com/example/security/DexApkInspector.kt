@@ -32,14 +32,21 @@ data class ApkInspectionReport(
     val hasSignatureBlock: Boolean,
     val detectedPackageName: String = "",
     val detectedAppClass: String = "",
+    val appComponentFactory: String = "",
+    val usesPermissions: List<String> = emptyList(),
+    val isApkArchive: Boolean = false,
+    val detectedFramework: String = "Android APK",
+    val existingPackerName: String? = null,
+    val dataFileEntriesCount: Int = 0,
+    val debugMetadataCount: Int = 0,
     val summaryMessage: String
 )
 
 /**
  * Layer 1: Real DEX Bytecode & Archive Integrity Inspector.
  * Parses APK/Zip archives (both self-APK and user-picked SAF APK/Zip files),
- * reads little-endian DEX header fields, validates magic bytes, checks the Dalvik 65,535
- * method_ids_size limit, and computes SHA-256 digests of every classes*.dex entry.
+ * reads little-endian DEX header fields, detects frameworks/packers/permissions/data files,
+ * validates magic bytes, and checks the Dalvik 65,535 method_ids_size limit.
  */
 object DexApkInspector {
     private const val DALVIK_METHOD_LIMIT = 65_535
@@ -87,16 +94,26 @@ object DexApkInspector {
         var totalEntries = 0
         var assetCount = 0
         var encryptedAssetCount = 0
+        var dataFileCount = 0
+        var debugMetadataCount = 0
         var hasManifest = false
         var hasSignature = false
         var detectedPkg = ""
         var detectedApp = ""
+        var compFactory = ""
+        var usesPermissions = emptyList<String>()
+
+        var isFlutter = false
+        var isUnity = false
+        var isReactNative = false
+        var detectedPacker: String? = null
 
         ZipInputStream(inputStream.buffered()).use { zis ->
             var entry = zis.nextEntry
             while (entry != null) {
                 totalEntries++
                 val name = entry.name
+                val lower = name.lowercase()
                 if (!entry.isDirectory) {
                     when {
                         name.matches(Regex("^classes\\d*\\.dex$")) -> {
@@ -110,23 +127,68 @@ object DexApkInspector {
                             if (info.isValidBinaryAxml) {
                                 detectedPkg = info.packageName
                                 detectedApp = info.originalApplicationClass
+                                compFactory = info.appComponentFactory
+                                usesPermissions = info.usesPermissions
+                                if (detectedApp == AxmlManifestPatcher.STUB_APPLICATION_CLASS) {
+                                    detectedPacker = "Bloody Team Stub"
+                                }
                             }
                         }
-                        name.startsWith("META-INF/") &&
-                            (name.endsWith(".RSA") || name.endsWith(".DSA") || name.endsWith(".EC")) -> {
+                        lower.startsWith("meta-inf/") &&
+                            (lower.endsWith(".rsa") || lower.endsWith(".dsa") || lower.endsWith(".ec")) -> {
                             hasSignature = true
                         }
-                        name.startsWith("assets/") -> {
-                            assetCount++
-                            if (name.endsWith(".enc") || name.endsWith(".dxs") || name.endsWith(".vault")) {
-                                encryptedAssetCount++
-                            }
+                    }
+
+                    if (lower.startsWith("assets/") || lower.contains("/assets/")) {
+                        assetCount++
+                        if (lower.endsWith(".enc") || lower.endsWith(".dxs") || lower.endsWith(".vault")) {
+                            encryptedAssetCount++
                         }
-                        name.startsWith("lib/") -> {
-                            val parts = name.split("/")
-                            if (parts.size >= 2 && parts[1].isNotEmpty()) {
-                                nativeAbis.add(parts[1])
+                        if (lower.startsWith("assets/bloody_wall/")) {
+                            detectedPacker = detectedPacker ?: "Bloody Team Stub"
+                        }
+                        if (lower.startsWith("assets/flutter_assets/")) {
+                            isFlutter = true
+                        }
+                        if (lower == "assets/index.android.bundle") {
+                            isReactNative = true
+                        }
+                    }
+
+                    if (lower.endsWith(".json") || lower.endsWith(".db") || lower.endsWith(".sqlite") ||
+                        lower.endsWith(".dat") || lower.endsWith(".bin") || lower.endsWith(".lua") ||
+                        lower.endsWith(".bundle") || lower.endsWith(".txt")
+                    ) {
+                        dataFileCount++
+                    }
+
+                    if (lower == "debugprobeskt.bin" ||
+                        lower == "kotlin-tooling-metadata.json" ||
+                        (lower.startsWith("meta-inf/") && lower.endsWith(".version")) ||
+                        lower.startsWith("meta-inf/com/android/build/")
+                    ) {
+                        debugMetadataCount++
+                    }
+
+                    if (lower.startsWith("lib/")) {
+                        val parts = name.split("/")
+                        if (parts.size >= 2 && parts[1].isNotEmpty()) {
+                            nativeAbis.add(parts[1])
+                        }
+                        val soName = parts.lastOrNull()?.lowercase().orEmpty()
+                        when {
+                            soName.contains("flutter") || soName == "libapp.so" -> isFlutter = true
+                            soName.contains("unity") || soName.contains("il2cpp") -> isUnity = true
+                            soName.contains("reactnative") -> isReactNative = true
+                            soName.contains("jiagu") -> detectedPacker = "360 Jiagu"
+                            soName.contains("tersafe") || soName.contains("txapp") || soName.contains("shella") -> {
+                                detectedPacker = "Tencent Legu / Shell"
                             }
+                            soName.contains("dexhelper") || soName.contains("secneo") -> {
+                                detectedPacker = "Bangcle / SecNeo"
+                            }
+                            soName.contains("pairipcore") -> detectedPacker = "Google Play PairIP"
                         }
                     }
                 }
@@ -135,11 +197,24 @@ object DexApkInspector {
             }
         }
 
+        val isApk = sourceLabel.lowercase().endsWith(".apk") || (hasManifest && dexReports.isNotEmpty())
+        val framework = when {
+            detectedPacker != null -> "Protected / Packed ($detectedPacker)"
+            isFlutter -> "Flutter Engine APK"
+            isUnity -> "Unity IL2CPP Game APK"
+            isReactNative -> "React Native APK"
+            !isApk && hasManifest -> "Android Source Project ZIP"
+            !isApk -> "Data / Asset Archive"
+            dexReports.size > 1 -> "MultiDEX Android APK (${dexReports.size} DEX)"
+            else -> "Standard Java/Kotlin APK"
+        }
+
         val allWithinLimit = dexReports.all { it.withinDalvik65kLimit }
         val summary = when {
-            dexReports.isEmpty() -> "Archive scanned ($totalEntries entries). No classes.dex found."
+            dexReports.isEmpty() -> "Archive scanned ($totalEntries entries, $dataFileCount data files)."
             !allWithinLimit -> "Warning: DEX method index exceeds 65,535 Dalvik limit!"
-            else -> "Verified ${dexReports.size} DEX file(s). Dalvik/ART 65K method limit safe."
+            detectedPacker != null -> "Detected existing packer ($detectedPacker) • ${dexReports.size} DEX."
+            else -> "$framework • ${dexReports.size} DEX verified (65K limit safe)."
         }
 
         return ApkInspectionReport(
@@ -154,6 +229,13 @@ object DexApkInspector {
             hasSignatureBlock = hasSignature,
             detectedPackageName = detectedPkg,
             detectedAppClass = detectedApp,
+            appComponentFactory = compFactory,
+            usesPermissions = usesPermissions,
+            isApkArchive = isApk,
+            detectedFramework = framework,
+            existingPackerName = detectedPacker,
+            dataFileEntriesCount = dataFileCount,
+            debugMetadataCount = debugMetadataCount,
             summaryMessage = summary
         )
     }
