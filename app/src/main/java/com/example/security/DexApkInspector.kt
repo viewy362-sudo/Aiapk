@@ -1,0 +1,201 @@
+package com.example.security
+
+import android.content.Context
+import android.net.Uri
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.security.MessageDigest
+import java.util.zip.ZipInputStream
+
+data class DexFileReport(
+    val entryName: String,
+    val dexVersion: String,
+    val fileSizeBytes: Long,
+    val stringIdsCount: Int,
+    val typeIdsCount: Int,
+    val methodIdsCount: Int,
+    val classDefsCount: Int,
+    val sha256Short: String,
+    val withinDalvik65kLimit: Boolean
+)
+
+data class ApkInspectionReport(
+    val sourceLabel: String,
+    val totalArchiveSizeBytes: Long,
+    val totalEntries: Int,
+    val dexReports: List<DexFileReport>,
+    val assetEntriesCount: Int,
+    val encryptedAssetCount: Int,
+    val nativeLibArchitectures: List<String>,
+    val hasManifest: Boolean,
+    val hasSignatureBlock: Boolean,
+    val summaryMessage: String
+)
+
+/**
+ * Layer 1: Real DEX Bytecode & Archive Integrity Inspector.
+ * Parses APK/Zip archives (both self-APK and user-picked SAF APK/Zip files),
+ * reads little-endian DEX header fields, validates magic bytes, checks the Dalvik 65,535
+ * method_ids_size limit, and computes SHA-256 digests of every classes*.dex entry.
+ */
+object DexApkInspector {
+    private const val DALVIK_METHOD_LIMIT = 65_535
+
+    fun inspectSelfApk(context: Context): ApkInspectionReport {
+        return ZeroCrashGuard.runGuarded(
+            source = "DexApkInspector.inspectSelfApk",
+            fallback = emptyFallback("Running APK")
+        ) {
+            val sourceDir = context.applicationInfo.sourceDir
+            val file = java.io.File(sourceDir)
+            file.inputStream().use { input ->
+                inspectStream(
+                    inputStream = input,
+                    sourceLabel = "Self APK (${context.packageName})",
+                    totalSizeBytes = file.length()
+                )
+            }
+        }
+    }
+
+    fun inspectUri(context: Context, uri: Uri, displayName: String): ApkInspectionReport {
+        return ZeroCrashGuard.runGuarded(
+            source = "DexApkInspector.inspectUri",
+            fallback = emptyFallback(displayName)
+        ) {
+            val size = context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                inspectStream(
+                    inputStream = input,
+                    sourceLabel = displayName,
+                    totalSizeBytes = size.coerceAtLeast(0L)
+                )
+            } ?: emptyFallback(displayName, "Unable to open document stream")
+        }
+    }
+
+    private fun inspectStream(
+        inputStream: InputStream,
+        sourceLabel: String,
+        totalSizeBytes: Long
+    ): ApkInspectionReport {
+        val dexReports = mutableListOf<DexFileReport>()
+        val nativeAbis = linkedSetOf<String>()
+        var totalEntries = 0
+        var assetCount = 0
+        var encryptedAssetCount = 0
+        var hasManifest = false
+        var hasSignature = false
+
+        ZipInputStream(inputStream.buffered()).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                totalEntries++
+                val name = entry.name
+                if (!entry.isDirectory) {
+                    when {
+                        name.matches(Regex("^classes\\d*\\.dex$")) -> {
+                            val bytes = zis.readBytes()
+                            dexReports.add(parseDexBytes(name, bytes))
+                        }
+                        name == "AndroidManifest.xml" -> hasManifest = true
+                        name.startsWith("META-INF/") &&
+                            (name.endsWith(".RSA") || name.endsWith(".DSA") || name.endsWith(".EC")) -> {
+                            hasSignature = true
+                        }
+                        name.startsWith("assets/") -> {
+                            assetCount++
+                            if (name.endsWith(".enc") || name.endsWith(".dxs") || name.endsWith(".vault")) {
+                                encryptedAssetCount++
+                            }
+                        }
+                        name.startsWith("lib/") -> {
+                            val parts = name.split("/")
+                            if (parts.size >= 2 && parts[1].isNotEmpty()) {
+                                nativeAbis.add(parts[1])
+                            }
+                        }
+                    }
+                }
+                zis.closeEntry()
+                entry = zis.nextEntry
+            }
+        }
+
+        val allWithinLimit = dexReports.all { it.withinDalvik65kLimit }
+        val summary = when {
+            dexReports.isEmpty() -> "Archive scanned ($totalEntries entries). No classes.dex found."
+            !allWithinLimit -> "Warning: DEX method index exceeds 65,535 Dalvik limit!"
+            else -> "Verified ${dexReports.size} DEX file(s). Dalvik/ART 65K method limit safe."
+        }
+
+        return ApkInspectionReport(
+            sourceLabel = sourceLabel,
+            totalArchiveSizeBytes = totalSizeBytes,
+            totalEntries = totalEntries,
+            dexReports = dexReports.sortedBy { it.entryName },
+            assetEntriesCount = assetCount,
+            encryptedAssetCount = encryptedAssetCount,
+            nativeLibArchitectures = nativeAbis.toList(),
+            hasManifest = hasManifest,
+            hasSignatureBlock = hasSignature,
+            summaryMessage = summary
+        )
+    }
+
+    fun parseDexBytes(entryName: String, bytes: ByteArray): DexFileReport {
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        val shaShort = digest.take(8).joinToString("") { "%02X".format(it) }
+
+        if (bytes.size < 112) {
+            return DexFileReport(
+                entryName = entryName,
+                dexVersion = "Invalid (<112B)",
+                fileSizeBytes = bytes.size.toLong(),
+                stringIdsCount = 0,
+                typeIdsCount = 0,
+                methodIdsCount = 0,
+                classDefsCount = 0,
+                sha256Short = shaShort,
+                withinDalvik65kLimit = false
+            )
+        }
+
+        val magicStr = String(bytes, 0, 4, Charsets.US_ASCII)
+        val versionStr = String(bytes, 4, 3, Charsets.US_ASCII)
+        val isDex = magicStr == "dex\n" && bytes[7] == 0.toByte()
+
+        val buf = ByteBuffer.wrap(bytes, 0, 112).order(ByteOrder.LITTLE_ENDIAN)
+        val stringIdsSize = buf.getInt(56)
+        val typeIdsSize = buf.getInt(64)
+        val methodIdsSize = buf.getInt(88)
+        val classDefsSize = buf.getInt(96)
+
+        return DexFileReport(
+            entryName = entryName,
+            dexVersion = if (isDex) "DEX $versionStr" else "Encrypted/Obfuscated",
+            fileSizeBytes = bytes.size.toLong(),
+            stringIdsCount = stringIdsSize.coerceAtLeast(0),
+            typeIdsCount = typeIdsSize.coerceAtLeast(0),
+            methodIdsCount = methodIdsSize.coerceAtLeast(0),
+            classDefsCount = classDefsSize.coerceAtLeast(0),
+            sha256Short = shaShort,
+            withinDalvik65kLimit = methodIdsSize in 1..DALVIK_METHOD_LIMIT
+        )
+    }
+
+    private fun emptyFallback(label: String, reason: String = "Unable to inspect archive") =
+        ApkInspectionReport(
+            sourceLabel = label,
+            totalArchiveSizeBytes = 0L,
+            totalEntries = 0,
+            dexReports = emptyList(),
+            assetEntriesCount = 0,
+            encryptedAssetCount = 0,
+            nativeLibArchitectures = emptyList(),
+            hasManifest = false,
+            hasSignatureBlock = false,
+            summaryMessage = reason
+        )
+}

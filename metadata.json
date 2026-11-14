@@ -1,0 +1,6 @@
+{
+  "name": "DexShield",
+  "description": "Android & Sketchware Pro 6-layer app security hardening, DEX analyzer, AES-256 asset vault, anti-tamper, anti-hook shield, string obfuscator, and zero-crash exception guard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
