@@ -20,8 +20,8 @@ jobs:
 
     - name: Build with Gradle
       run: |
+        chmod +x gradlew || true
         if [ -f "./gradlew" ]; then
-          chmod +x gradlew
           ./gradlew assembleDebug
         else
           gradle assembleDebug
