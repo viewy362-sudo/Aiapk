@@ -21,7 +21,9 @@ import com.example.security.RuntimeShieldReport
 import com.example.security.SketchwareKitGenerator
 import com.example.security.StringObfuscatorEngine
 import com.example.security.VaultPayloadResult
+import com.example.security.WallProtectionTier
 import com.example.security.ZeroCrashGuard
+import com.example.ui.theme.AppThemePreset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -287,7 +289,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                     it.copy(
                         isProtecting = false,
                         protectedOutput = result,
-                        statusToast = "Forged ${result.suggestedOutputName}"
+                        statusToast = "Forged ${result.suggestedPrimaryName}"
                     )
                 }
                 SoundFxManager.playSuccessChime()
@@ -337,25 +339,112 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
     fun saveProtectedArtifactToUri(destUri: Uri) {
         SoundFxManager.playClick()
         val artifact = _uiState.value.protectedOutput ?: return
+        saveFileToUri(artifact.primaryOutputFile, artifact.suggestedPrimaryName, destUri)
+    }
+
+    fun saveCompanionKitToUri(destUri: Uri) {
+        SoundFxManager.playClick()
+        val artifact = _uiState.value.protectedOutput ?: return
+        val kitFile = artifact.companionKitFile ?: return
+        val kitName = artifact.suggestedKitName ?: "bloody_kit.zip"
+        saveFileToUri(kitFile, kitName, destUri)
+    }
+
+    private fun saveFileToUri(sourceFile: File, displayName: String, destUri: Uri) {
         viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
             try {
                 val ctx = getApplication<Application>().applicationContext
                 withContext(Dispatchers.IO) {
                     ctx.contentResolver.openOutputStream(destUri)?.use { out ->
-                        artifact.outputCacheFile.inputStream().use { input ->
+                        sourceFile.inputStream().use { input ->
                             input.copyTo(out)
                         }
                         out.flush()
                     } ?: throw IllegalStateException("Cannot open destination URI")
                 }
                 _uiState.update {
-                    it.copy(statusToast = "Saved ${artifact.suggestedOutputName}")
+                    it.copy(statusToast = "Saved $displayName")
                 }
                 SoundFxManager.playSuccessChime()
             } catch (t: Throwable) {
                 _uiState.update {
                     it.copy(protectorError = "Save failed: ${t.message}")
                 }
+            }
+        }
+    }
+
+    fun selectThemePreset(preset: AppThemePreset) {
+        SoundFxManager.playToggle(true)
+        updateProfile { it.copy(themePresetName = preset.name) }
+        _uiState.update { it.copy(statusToast = "Theme: ${preset.displayName}") }
+    }
+
+    fun randomizeThemePreset() {
+        SoundFxManager.playSuccessChime()
+        val next = AppThemePreset.randomDifferentFrom(profile.value.resolvedThemePreset)
+        updateProfile { it.copy(themePresetName = next.name) }
+        _uiState.update { it.copy(statusToast = "Random Design: ${next.displayName}") }
+    }
+
+    fun applyWallTier(tier: WallProtectionTier) {
+        SoundFxManager.playToggle(true)
+        updateProfile { p ->
+            when (tier) {
+                WallProtectionTier.WALL_V1_STANDARD -> p.copy(
+                    wallProtectionTier = tier.name,
+                    antiTamperSignature = true,
+                    zeroCrashExceptionGuard = true,
+                    dexBytecodeGuard = true,
+                    assetAes256Encryption = false,
+                    nativeJniStubPacking = false,
+                    signOutputApk = true
+                )
+                WallProtectionTier.WALL_V2_VAULT -> p.copy(
+                    wallProtectionTier = tier.name,
+                    antiTamperSignature = true,
+                    zeroCrashExceptionGuard = true,
+                    dexBytecodeGuard = true,
+                    assetAes256Encryption = true,
+                    stringMetadataObfuscation = true,
+                    detectHttpCanary = true,
+                    sslPinningProxyBlock = true,
+                    nativeJniStubPacking = false,
+                    signOutputApk = true
+                )
+                WallProtectionTier.WALL_V3_JNI_STUB -> p.copy(
+                    wallProtectionTier = tier.name,
+                    antiTamperSignature = true,
+                    zeroCrashExceptionGuard = true,
+                    dexBytecodeGuard = true,
+                    assetAes256Encryption = true,
+                    antiDebugFridaShield = true,
+                    stringMetadataObfuscation = true,
+                    rootMagiskDetection = true,
+                    emulatorCloneShield = true,
+                    nativeJniStubPacking = true,
+                    signOutputApk = true
+                )
+                WallProtectionTier.WALL_V4_FORTRESS -> p.copy(
+                    wallProtectionTier = tier.name,
+                    dexBytecodeGuard = true,
+                    assetAes256Encryption = true,
+                    antiTamperSignature = true,
+                    antiDebugFridaShield = true,
+                    stringMetadataObfuscation = true,
+                    zeroCrashExceptionGuard = true,
+                    rootMagiskDetection = true,
+                    emulatorCloneShield = true,
+                    sslPinningProxyBlock = true,
+                    screenTapjackingShield = true,
+                    nativeJniStubPacking = true,
+                    shrinkResources = true,
+                    shrinkDrawablesAndAnim = true,
+                    shrinkLayoutsAndXml = true,
+                    stripDebugMetadata = true,
+                    detectHttpCanary = true,
+                    signOutputApk = true
+                )
             }
         }
     }

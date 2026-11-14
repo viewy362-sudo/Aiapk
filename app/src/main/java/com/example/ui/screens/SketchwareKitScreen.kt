@@ -228,7 +228,7 @@ fun SketchwareKitScreen(
                         val bundleText = onBuildExportBundle()
                         val sendIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(Intent.EXTRA_SUBJECT, "DexShield Kit - ${profile.appName}")
+                            putExtra(Intent.EXTRA_SUBJECT, "Bloody Team Kit - ${profile.appName}")
                             putExtra(Intent.EXTRA_TEXT, bundleText)
                         }
                         context.startActivity(Intent.createChooser(sendIntent, "Export Sketchware Security Kit"))

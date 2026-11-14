@@ -3,16 +3,20 @@ package com.example
 import android.content.Context
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
+import com.example.security.ApkSignerEngine
 import com.example.security.AppProtectorPipeline
 import com.example.security.CryptoVaultEngine
 import com.example.security.DexApkInspector
+import com.example.security.DexPackerEngine
 import com.example.security.ProtectionProfile
 import com.example.security.SketchwareKitGenerator
 import com.example.security.StringObfuscatorEngine
 import com.example.security.ZeroCrashGuard
+import com.example.ui.theme.AppThemePreset
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -126,9 +130,9 @@ class SecurityEnginesUnitTest {
         )
 
         assertEquals(1, artifact.encryptedAssetsCount)
-        assertTrue(artifact.outputCacheFile.exists())
+        assertTrue(artifact.primaryOutputFile.exists())
 
-        ZipFile(artifact.outputCacheFile).use { outZip ->
+        ZipFile(artifact.primaryOutputFile).use { outZip ->
             val encEntry = outZip.getEntry("assets/config.json.enc")
             assertTrue("Encrypted asset must exist", encEntry != null)
             val encBytes = outZip.getInputStream(encEntry).readBytes()
@@ -148,12 +152,98 @@ class SecurityEnginesUnitTest {
     }
 
     @Test
+    fun apkProtectorAndSignerProducesValidV1AndV2SignedApk() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val inputApk = File(context.cacheDir, "sample_input.apk")
+        val fakeDex = ByteArray(512).apply {
+            "dex\n038\u0000".toByteArray(Charsets.US_ASCII).copyInto(this, 0)
+            for (i in 8 until size) this[i] = (i * 7 and 0xFF).toByte()
+        }
+        val fakeArsc = ByteArray(128) { 0x41 }
+        val fakeSo = ByteArray(256) { 0x7F }
+
+        ZipOutputStream(FileOutputStream(inputApk)).use { zos ->
+            zos.putNextEntry(ZipEntry("AndroidManifest.xml"))
+            zos.write("<manifest/>".toByteArray())
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("classes.dex"))
+            zos.write(fakeDex)
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("resources.arsc"))
+            zos.write(fakeArsc)
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("lib/arm64-v8a/libdemo.so"))
+            zos.write(fakeSo)
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("DebugProbesKt.bin"))
+            zos.write(byteArrayOf(1, 2, 3, 4))
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("META-INF/OLD.RSA"))
+            zos.write(byteArrayOf(9, 8, 7))
+            zos.closeEntry()
+        }
+
+        val profile = ProtectionProfile(
+            appName = "Bloody Team",
+            packageName = "com.bloodyteam.demo",
+            signOutputApk = true,
+            stripDebugMetadata = true
+        )
+
+        val artifact = AppProtectorPipeline.protectArchive(
+            context = context,
+            inputUri = Uri.fromFile(inputApk),
+            inputFileName = "sample_input.apk",
+            profile = profile,
+            passphrase = "SignMaster#2026",
+            secretToHide = "api_secret_token_abc",
+            onStep = {}
+        )
+
+        assertTrue(artifact.isApkInput)
+        assertTrue(artifact.suggestedPrimaryName.endsWith("_bloody_signed.apk"))
+        assertTrue(artifact.primaryOutputFile.exists())
+        assertTrue(artifact.companionKitFile?.exists() == true)
+
+        val verify = ApkSignerEngine.verifyApkSignatures(artifact.primaryOutputFile)
+        assertTrue("APK v1 JAR signature missing", verify.hasV1JarSignature)
+        assertTrue("APK v2 Signing Block missing", verify.hasV2SigningBlock)
+        assertTrue("APK v2 RSA-2048 signature verification failed", verify.v2RsaVerified)
+
+        ZipFile(artifact.primaryOutputFile).use { apkZip ->
+            assertTrue(apkZip.getEntry("META-INF/OLD.RSA") == null)
+            assertTrue(apkZip.getEntry("DebugProbesKt.bin") == null)
+            assertEquals(ZipEntry.STORED, apkZip.getEntry("resources.arsc").method)
+            assertEquals(ZipEntry.STORED, apkZip.getEntry("lib/arm64-v8a/libdemo.so").method)
+            assertTrue(apkZip.getEntry("assets/bloody_wall/protection_policy.json") != null)
+            assertTrue(apkZip.getEntry("assets/bloody_wall/tex_atlas_0.png") != null)
+
+            val encSecretBytes = apkZip.getInputStream(apkZip.getEntry("assets/bloody_wall/vault_config.enc")).readBytes()
+            val decrypted = String(CryptoVaultEngine.decryptBytes(encSecretBytes, "SignMaster#2026"), Charsets.UTF_8)
+            assertEquals("api_secret_token_abc", decrypted)
+        }
+    }
+
+    @Test
+    fun themePresetsAreDistinctAndRandomShuffleChangesPreset() {
+        assertEquals(5, AppThemePreset.entries.size)
+        val current = AppThemePreset.CRIMSON_FORGE
+        val shuffled = AppThemePreset.randomDifferentFrom(current)
+        assertNotEquals(current, shuffled)
+    }
+
+    @Test
     fun dexPackerDisguiseAndJniStubGeneration() {
         val fakeDex = ByteArray(512)
         "dex\n038\u0000".toByteArray(Charsets.US_ASCII).copyInto(fakeDex, 0)
         for (i in 8 until fakeDex.size) fakeDex[i] = (i and 0xFF).toByte()
 
-        val packed = com.example.security.DexPackerEngine.packDexEntry(
+        val packed = DexPackerEngine.packDexEntry(
             dexEntryName = "classes.dex",
             dexBytes = fakeDex,
             passphrase = "BloodyPass#99",
@@ -161,7 +251,7 @@ class SecurityEnginesUnitTest {
             index = 0
         )
         assertEquals("tex_atlas_0.png", packed.disguisedAssetName)
-        val unpacked = com.example.security.DexPackerEngine.unpackDexEntry(
+        val unpacked = DexPackerEngine.unpackDexEntry(
             packedBytes = packed.packedBytes,
             passphrase = "BloodyPass#99",
             index = 0
@@ -169,8 +259,8 @@ class SecurityEnginesUnitTest {
         assertArrayEquals(fakeDex, unpacked)
 
         val profile = ProtectionProfile(appName = "Bloody Team", packageName = "com.bloodyteam.app")
-        val cpp = com.example.security.DexPackerEngine.generateNativeJniCpp(profile)
-        val stub = com.example.security.DexPackerEngine.generateStubApplicationJava(profile)
+        val cpp = DexPackerEngine.generateNativeJniCpp(profile)
+        val stub = DexPackerEngine.generateStubApplicationJava(profile)
         assertTrue(cpp.contains("Java_com_bloodyteam_app_stub_DexStubApplication_nativeDecryptDexToRam"))
         assertTrue(stub.contains("InMemoryDexClassLoader"))
     }
