@@ -142,6 +142,9 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
             val report = withContext(Dispatchers.IO) {
                 DexApkInspector.inspectUri(ctx, uri, displayName)
             }
+            if (report.detectedPackageName.isNotBlank()) {
+                updateProfile { it.copy(packageName = report.detectedPackageName) }
+            }
             _uiState.update {
                 it.copy(
                     isAuditing = false,
@@ -166,6 +169,9 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
             _uiState.update { it.copy(isAuditing = true, protectorError = null) }
             val report = withContext(Dispatchers.IO) {
                 DexApkInspector.inspectUri(ctx, uri, displayName)
+            }
+            if (report.detectedPackageName.isNotBlank()) {
+                updateProfile { it.copy(packageName = report.detectedPackageName) }
             }
             _uiState.update {
                 it.copy(
@@ -196,6 +202,9 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
             val uri = Uri.fromFile(cachedCopy)
             val report = withContext(Dispatchers.IO) {
                 DexApkInspector.inspectUri(ctx, uri, "BloodyTeam_base.apk")
+            }
+            if (report.detectedPackageName.isNotBlank()) {
+                updateProfile { it.copy(packageName = report.detectedPackageName) }
             }
             _uiState.update {
                 it.copy(

@@ -632,9 +632,15 @@ fun ProtectorStudioScreen(
                                         "Cert SHA-256: ${sig.certSha256Colon}"
                                 } ?: ""
 
+                                val stubLine = if (out.stubDexInjected) {
+                                    "\nStub DEX: INJECTED (${out.detectedPackageName}) • AXML Patched: YES"
+                                } else {
+                                    ""
+                                }
+
                                 Text(
                                     text = "Output: ${out.suggestedPrimaryName} (${out.primarySizeBytes / 1024} KB)\n" +
-                                        "Packed DEX: ${out.packedDexCount} ${out.disguisedDexNames} • Stripped Meta: ${out.strippedMetadataCount}$sigInfo",
+                                        "Packed DEX: ${out.packedDexCount} ${out.disguisedDexNames} • Stripped Meta: ${out.strippedMetadataCount}$stubLine$sigInfo",
                                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily),
                                     color = MaterialTheme.colorScheme.onSurface
                                 )

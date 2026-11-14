@@ -6,6 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -20,6 +21,9 @@ data class ProtectedBuildArtifact(
     val companionKitFile: File?,
     val suggestedKitName: String?,
     val signedVerification: ApkSignatureVerificationResult?,
+    val stubDexInjected: Boolean,
+    val manifestPatched: Boolean,
+    val detectedPackageName: String,
     val encryptedAssetsCount: Int,
     val packedDexCount: Int,
     val disguisedDexNames: List<String>,
@@ -32,10 +36,12 @@ data class ProtectedBuildArtifact(
 
 /**
  * End-to-End Application Protection & Signing Pipeline (Bloody Team).
- * - For APK inputs: injects Bloody Wall policy + disguised DEX vault + encrypted secret config,
- *   strips selected debug metadata, 4B/4KB ZipAligns entries, and applies JAR v1 + APK Signature
- *   Scheme v2 signing to produce a signed .apk alongside the companion JNI/Stub Security Kit .zip.
- * - For ZIP inputs: encrypts assets, packs any classes.dex payloads, and injects the full Java/JNI/ProGuard kit.
+ * - For APK inputs with Stub Packing enabled:
+ *     1) Inspects binary AXML AndroidManifest.xml & patches <application android:name> to BloodyStubApplication.
+ *     2) Encrypts original classes*.dex into assets/bloody_wall/tex_atlas_N.<ext> (AES-256-GCM + XOR).
+ *     3) Injects compiled pre-built bloody_stub.dex as classes.dex (active Runtime Guards + InMemoryDexClassLoader).
+ *     4) Strips debug metadata, 4B/4KB ZipAligns entries, and signs with JAR v1 + APK Signature Scheme v2.
+ * - Also exports companion Developer Security Kit .zip with Java/JNI/ProGuard files.
  */
 object AppProtectorPipeline {
 
@@ -71,13 +77,23 @@ object AppProtectorPipeline {
         var strippedMetadataCount = 0
         val disguisedDexNames = mutableListOf<String>()
         var injectedFiles = 0
-        val pkgPath = profile.packageName.replace('.', '/')
 
-        val apkEntriesForSigning = mutableListOf<ApkEntryData>()
+        var detectedPkgName = profile.packageName
+        var origAppClassName = ""
+        var rawManifestBytes: ByteArray? = null
+        val apkNonDexEntries = mutableListOf<ApkEntryData>()
+        val apkOriginalDexEntries = mutableListOf<ApkEntryData>()
         val packedDexForApkAssets = mutableListOf<Pair<String, ByteArray>>()
 
+        val seenKitNames = HashSet<String>()
         log("2/8 Encrypting payloads & applying resource/metadata hardening...")
         ZipOutputStream(FileOutputStream(kitOutFile).buffered()).use { kitZos ->
+            fun safeWriteKitEntry(name: String, bytes: ByteArray) {
+                val clean = name.trimStart('/')
+                if (clean.isNotBlank() && seenKitNames.add(clean)) {
+                    writeZipEntry(kitZos, clean, bytes)
+                }
+            }
             context.contentResolver.openInputStream(inputUri)?.use { rawIn ->
                 ZipInputStream(rawIn.buffered()).use { zis ->
                     var entry = zis.nextEntry
@@ -104,24 +120,25 @@ object AppProtectorPipeline {
                                 !name.endsWith(".enc")
 
                             when {
-                                isOldSignature -> {
-                                    strippedMetadataCount++
-                                }
-                                isUnneededDebugMeta -> {
-                                    strippedMetadataCount++
-                                }
+                                isOldSignature -> strippedMetadataCount++
+                                isUnneededDebugMeta -> strippedMetadataCount++
                                 else -> {
-                                    if (isApk && profile.signOutputApk) {
+                                    if (isApk && name == "AndroidManifest.xml") {
+                                        rawManifestBytes = data
+                                        val manifestInfo = AxmlManifestPatcher.inspectBinaryManifest(data)
+                                        if (manifestInfo.isValidBinaryAxml) {
+                                            if (manifestInfo.packageName.isNotBlank()) {
+                                                detectedPkgName = manifestInfo.packageName
+                                            }
+                                            origAppClassName = manifestInfo.originalApplicationClass
+                                        }
+                                    } else if (isApk && isDex) {
+                                        apkOriginalDexEntries.add(ApkEntryData(name = name, bytes = data, forceStored = false))
+                                    } else if (isApk && profile.signOutputApk) {
                                         val mustStore = lower == "resources.arsc" ||
                                             (lower.startsWith("lib/") && lower.endsWith(".so")) ||
                                             entry.method == ZipEntry.STORED
-                                        apkEntriesForSigning.add(
-                                            ApkEntryData(
-                                                name = name,
-                                                bytes = data,
-                                                forceStored = mustStore
-                                            )
-                                        )
+                                        apkNonDexEntries.add(ApkEntryData(name = name, bytes = data, forceStored = mustStore))
                                     }
 
                                     if (isDex && profile.dexBytecodeGuard && data.isNotEmpty()) {
@@ -132,7 +149,7 @@ object AppProtectorPipeline {
                                             disguiseExtension = profile.dexDisguiseExtension,
                                             index = packedDexCount
                                         )
-                                        writeZipEntry(kitZos, "disguised_dex_assets/${packed.disguisedAssetName}", packed.packedBytes)
+                                        safeWriteKitEntry("disguised_dex_assets/${packed.disguisedAssetName}", packed.packedBytes)
                                         packedDexForApkAssets.add("assets/bloody_wall/${packed.disguisedAssetName}" to packed.packedBytes)
                                         disguisedDexNames.add(packed.disguisedAssetName)
                                         packedDexCount++
@@ -143,10 +160,10 @@ object AppProtectorPipeline {
                                         } else {
                                             "$name.enc"
                                         }
-                                        writeZipEntry(kitZos, targetPath, enc.cipherBytes)
+                                        safeWriteKitEntry(targetPath, enc.cipherBytes)
                                         encryptedAssets++
                                     } else if (!isApk) {
-                                        writeZipEntry(kitZos, name, data)
+                                        safeWriteKitEntry(name, data)
                                     }
                                 }
                             }
@@ -157,6 +174,9 @@ object AppProtectorPipeline {
                 }
             } ?: throw IllegalStateException("Unable to read input archive")
 
+            val effectiveProfile = profile.copy(packageName = detectedPkgName)
+            val pkgPath = detectedPkgName.replace('.', '/')
+
             log("   Packed $packedDexCount DEX -> $disguisedDexNames; stripped $strippedMetadataCount meta file(s).")
 
             val securityPrefix = if (isApk) {
@@ -165,97 +185,132 @@ object AppProtectorPipeline {
                 "bloody_security/java/$pkgPath/security"
             }
 
-            log("3/8 Generating 10-layer Java protection suite (${profile.enabledLayersCount}/10)...")
-            val guardJava = SketchwareKitGenerator.generateSketchwareJavaGuard(profile, primaryDexSha)
-            writeZipEntry(kitZos, "$securityPrefix/DexShieldGuard.java", guardJava.toByteArray(Charsets.UTF_8))
+            log("3/8 Generating 10-layer Java protection suite (${effectiveProfile.enabledLayersCount}/10)...")
+            val guardJava = SketchwareKitGenerator.generateSketchwareJavaGuard(effectiveProfile, primaryDexSha)
+            safeWriteKitEntry("$securityPrefix/DexShieldGuard.java", guardJava.toByteArray(Charsets.UTF_8))
             injectedFiles++
 
-            if (profile.assetAes256Encryption) {
-                val assetJava = SketchwareKitGenerator.generateAssetVaultHelperJava(profile)
-                writeZipEntry(kitZos, "$securityPrefix/AssetVaultHelper.java", assetJava.toByteArray(Charsets.UTF_8))
+            if (effectiveProfile.assetAes256Encryption) {
+                val assetJava = SketchwareKitGenerator.generateAssetVaultHelperJava(effectiveProfile)
+                safeWriteKitEntry("$securityPrefix/AssetVaultHelper.java", assetJava.toByteArray(Charsets.UTF_8))
                 injectedFiles++
             }
 
-            if (profile.sslPinningProxyBlock || profile.detectHttpCanary) {
-                val sslJava = SketchwareKitGenerator.generateSslPinningJava(profile)
-                writeZipEntry(kitZos, "$securityPrefix/SslPinningGuard.java", sslJava.toByteArray(Charsets.UTF_8))
+            if (effectiveProfile.sslPinningProxyBlock || effectiveProfile.detectHttpCanary) {
+                val sslJava = SketchwareKitGenerator.generateSslPinningJava(effectiveProfile)
+                safeWriteKitEntry("$securityPrefix/SslPinningGuard.java", sslJava.toByteArray(Charsets.UTF_8))
                 injectedFiles++
             }
 
-            if (profile.nativeJniStubPacking) {
+            if (effectiveProfile.nativeJniStubPacking) {
                 log("4/8 Generating NDK C++ JNI decryptor & InMemoryDexClassLoader Stub...")
-                val cpp = DexPackerEngine.generateNativeJniCpp(profile)
+                val cpp = DexPackerEngine.generateNativeJniCpp(effectiveProfile)
                 val cmake = DexPackerEngine.generateCMakeLists()
-                val stubJava = DexPackerEngine.generateStubApplicationJava(profile)
-                val manifestPatch = DexPackerEngine.generateManifestStubPatch(profile)
-                writeZipEntry(kitZos, "native_jni/dex_shield_jni.cpp", cpp.toByteArray(Charsets.UTF_8))
-                writeZipEntry(kitZos, "native_jni/CMakeLists.txt", cmake.toByteArray(Charsets.UTF_8))
-                writeZipEntry(kitZos, "stub/$pkgPath/stub/DexStubApplication.java", stubJava.toByteArray(Charsets.UTF_8))
-                writeZipEntry(kitZos, "stub/AndroidManifest_stub_patch.xml", manifestPatch.toByteArray(Charsets.UTF_8))
+                val stubJava = DexPackerEngine.generateStubApplicationJava(effectiveProfile)
+                val manifestPatch = DexPackerEngine.generateManifestStubPatch(effectiveProfile)
+                safeWriteKitEntry("native_jni/dex_shield_jni.cpp", cpp.toByteArray(Charsets.UTF_8))
+                safeWriteKitEntry("native_jni/CMakeLists.txt", cmake.toByteArray(Charsets.UTF_8))
+                safeWriteKitEntry("stub/$pkgPath/stub/DexStubApplication.java", stubJava.toByteArray(Charsets.UTF_8))
+                safeWriteKitEntry("stub/AndroidManifest_stub_patch.xml", manifestPatch.toByteArray(Charsets.UTF_8))
                 injectedFiles += 4
             } else {
                 log("4/8 Native JNI & Stub generation skipped.")
             }
 
-            if (profile.stringMetadataObfuscation && secretToHide.isNotEmpty()) {
+            if (effectiveProfile.stringMetadataObfuscation && secretToHide.isNotEmpty()) {
                 log("5/8 Obfuscating API keys into StringVault.java (zero plaintext)...")
                 val obf = StringObfuscatorEngine.obfuscate(secretToHide, "getProtectedSecret")
                 val vaultClass = buildString {
-                    appendLine("package ${profile.packageName}.security;")
+                    appendLine("package ${effectiveProfile.packageName}.security;")
                     appendLine()
                     appendLine("public final class StringVault {")
                     appendLine("    private StringVault() {}")
                     appendLine(obf.javaDecoderCode.prependIndent("    "))
                     appendLine("}")
                 }
-                writeZipEntry(kitZos, "$securityPrefix/StringVault.java", vaultClass.toByteArray(Charsets.UTF_8))
+                safeWriteKitEntry("$securityPrefix/StringVault.java", vaultClass.toByteArray(Charsets.UTF_8))
                 injectedFiles++
             } else {
                 log("5/8 StringVault generation skipped.")
             }
 
-            log("6/8 Writing R8/ProGuard & Resource Confusing manifest...")
-            val proguard = SketchwareKitGenerator.generateProguardRules(profile)
-            writeZipEntry(kitZos, "bloody_security/proguard-rules.pro", proguard.toByteArray(Charsets.UTF_8))
+            log("6/8 Writing R8/ProGuard & Policy Manifest...")
+            val proguard = SketchwareKitGenerator.generateProguardRules(effectiveProfile)
+            safeWriteKitEntry("bloody_security/proguard-rules.pro", proguard.toByteArray(Charsets.UTF_8))
             injectedFiles++
 
             val policyJson = buildPolicyJson(
-                profile = profile,
+                profile = effectiveProfile,
                 inputFileName = inputFileName,
+                origAppClassName = origAppClassName,
                 packedDexCount = packedDexCount,
                 disguisedDexNames = disguisedDexNames,
                 encryptedAssets = encryptedAssets,
                 strippedMetadataCount = strippedMetadataCount,
                 dexReports = inspection.dexReports
             )
-            writeZipEntry(kitZos, "bloody_security/dex_packing_manifest.json", policyJson.toByteArray(Charsets.UTF_8))
+            safeWriteKitEntry("bloody_security/dex_packing_manifest.json", policyJson.toByteArray(Charsets.UTF_8))
             injectedFiles++
         }
 
         // If input is an APK and signing is enabled, build a real ZipAligned & v1/v2 signed .apk
         var signatureResult: ApkSignatureVerificationResult? = null
+        var stubDexInjected = false
+        var manifestPatched = false
+
         if (isApk && profile.signOutputApk) {
-            log("7/8 Injecting Bloody Wall vault & RSA-2048 signing certificate (${profile.signerCommonName})...")
+            log("7/8 Injecting Compiled Runtime Stub DEX + Patching Binary AXML Manifest...")
             val identity = ApkSignerEngine.loadOrCreateSigningIdentity(
                 context = context,
                 commonName = profile.signerCommonName,
                 organization = profile.signerOrg
             )
-            val updatedProfile = profile.copy(expectedSignatureSha256 = identity.certSha256Colon)
+            val updatedProfile = profile.copy(
+                packageName = detectedPkgName,
+                expectedSignatureSha256 = identity.certSha256Colon
+            )
+
+            val stubDexBytes = runCatching {
+                context.assets.open("bloody_stub.dex").use { it.readBytes() }
+            }.getOrNull()
+
+            val shouldReplaceDexWithStub = updatedProfile.dexBytecodeGuard &&
+                updatedProfile.nativeJniStubPacking &&
+                packedDexForApkAssets.isNotEmpty() &&
+                stubDexBytes != null &&
+                stubDexBytes.isNotEmpty() &&
+                rawManifestBytes != null &&
+                AxmlManifestPatcher.inspectBinaryManifest(rawManifestBytes!!).isValidBinaryAxml
+
+            val finalEntries = apkNonDexEntries.filterNot {
+                it.name.startsWith("assets/bloody_wall/")
+            }.toMutableList()
+
+            if (shouldReplaceDexWithStub) {
+                val manifestBytes = rawManifestBytes!!
+                val patched = AxmlManifestPatcher.patchApplicationStub(manifestBytes)
+                finalEntries.add(ApkEntryData("AndroidManifest.xml", patched.patchedBytes))
+                finalEntries.add(ApkEntryData("classes.dex", stubDexBytes!!))
+                finalEntries.add(ApkEntryData("assets/bloody_wall/stub_seed.bin", sealPassphraseForStub(passphrase, detectedPkgName)))
+                stubDexInjected = true
+                manifestPatched = true
+                log("   Injected compiled BloodyStubApplication classes.dex (${stubDexBytes.size / 1024} KB) & patched binary AndroidManifest.xml (origApp=${origAppClassName.ifBlank { "default" }}).")
+            } else {
+                rawManifestBytes?.let { finalEntries.add(ApkEntryData("AndroidManifest.xml", it)) }
+                finalEntries.addAll(apkOriginalDexEntries)
+                log("   Preserved original classes*.dex & manifest (Stub DEX swap disabled or plain ZIP).")
+            }
+
             val embeddedPolicy = buildPolicyJson(
                 profile = updatedProfile,
                 inputFileName = inputFileName,
+                origAppClassName = origAppClassName,
                 packedDexCount = packedDexCount,
                 disguisedDexNames = disguisedDexNames,
                 encryptedAssets = encryptedAssets,
                 strippedMetadataCount = strippedMetadataCount,
                 dexReports = inspection.dexReports
             ).toByteArray(Charsets.UTF_8)
-
-            // Replace or append Bloody Wall embedded policy + disguised DEX vaults + encrypted secret config
-            val finalEntries = apkEntriesForSigning.filterNot {
-                it.name.startsWith("assets/bloody_wall/")
-            }.toMutableList()
 
             finalEntries.add(ApkEntryData("assets/bloody_wall/protection_policy.json", embeddedPolicy))
             if (secretToHide.isNotEmpty()) {
@@ -301,6 +356,9 @@ object AppProtectorPipeline {
             companionKitFile = if (useSignedApkAsPrimary) kitOutFile else null,
             suggestedKitName = if (useSignedApkAsPrimary) "${baseName}_bloody_kit.zip" else null,
             signedVerification = signatureResult,
+            stubDexInjected = stubDexInjected,
+            manifestPatched = manifestPatched,
+            detectedPackageName = detectedPkgName,
             encryptedAssetsCount = encryptedAssets,
             packedDexCount = packedDexCount,
             disguisedDexNames = disguisedDexNames,
@@ -312,9 +370,19 @@ object AppProtectorPipeline {
         )
     }
 
+    fun sealPassphraseForStub(passphrase: String, packageName: String): ByteArray {
+        val raw = passphrase.toByteArray(Charsets.UTF_8)
+        val mask = MessageDigest.getInstance("SHA-256")
+            .digest("BT_STUB_2026|$packageName".toByteArray(Charsets.UTF_8))
+        return ByteArray(raw.size) { i ->
+            ((raw[i].toInt() and 0xFF) xor (mask[i % mask.size].toInt() and 0xFF)).toByte()
+        }
+    }
+
     private fun buildPolicyJson(
         profile: ProtectionProfile,
         inputFileName: String,
+        origAppClassName: String,
         packedDexCount: Int,
         disguisedDexNames: List<String>,
         encryptedAssets: Int,
@@ -324,29 +392,31 @@ object AppProtectorPipeline {
         put("engine", "Bloody Team Forge 2.0")
         put("appName", profile.appName)
         put("packageName", profile.packageName)
+        put("origApplication", origAppClassName)
         put("wallTier", profile.resolvedWallTier.name)
         put("themePreset", profile.resolvedThemePreset.name)
         put("inputFile", inputFileName)
         put("enabledLayers", profile.enabledLayersCount)
         put("expectedSignatureSha256", profile.expectedSignatureSha256)
+        put("dexBytecodeGuard", profile.dexBytecodeGuard)
+        put("dexDisguiseExtension", profile.dexDisguiseExtension)
+        put("antiTamperSignature", profile.antiTamperSignature)
+        put("antiDebugFridaShield", profile.antiDebugFridaShield)
+        put("rootMagiskDetection", profile.rootMagiskDetection)
+        put("emulatorCloneShield", profile.emulatorCloneShield)
+        put("sslPinningProxyBlock", profile.sslPinningProxyBlock)
+        put("zeroCrashExceptionGuard", profile.zeroCrashExceptionGuard)
+        put("screenTapjackingShield", profile.screenTapjackingShield)
+        put("detectHttpCanary", profile.detectHttpCanary)
+        put("customSecurityToast", profile.customSecurityToast)
+        put("customToastMessage", profile.customToastMessage)
+        put("dialogCancelable", profile.dialogCancelable)
+        put("checkInternetRequired", profile.checkInternetRequired)
+        put("loginValidateGate", profile.loginValidateGate)
         put("packedDexCount", packedDexCount)
         put("disguisedDexAssets", JSONArray(disguisedDexNames))
         put("encryptedAssets", encryptedAssets)
         put("strippedMetadataCount", strippedMetadataCount)
-        put("resourceHardening", JSONObject().apply {
-            put("shrinkResources", profile.shrinkResources)
-            put("shrinkDrawablesAndAnim", profile.shrinkDrawablesAndAnim)
-            put("shrinkLayoutsAndXml", profile.shrinkLayoutsAndXml)
-            put("stripDebugMetadata", profile.stripDebugMetadata)
-        })
-        put("runtimeConfig", JSONObject().apply {
-            put("detectHttpCanary", profile.detectHttpCanary)
-            put("customSecurityToast", profile.customSecurityToast)
-            put("customToastMessage", profile.customToastMessage)
-            put("dialogCancelable", profile.dialogCancelable)
-            put("checkInternetRequired", profile.checkInternetRequired)
-            put("loginValidateGate", profile.loginValidateGate)
-        })
         put("dexReports", JSONArray().apply {
             dexReports.forEach { d ->
                 put(JSONObject().apply {

@@ -30,6 +30,8 @@ data class ApkInspectionReport(
     val nativeLibArchitectures: List<String>,
     val hasManifest: Boolean,
     val hasSignatureBlock: Boolean,
+    val detectedPackageName: String = "",
+    val detectedAppClass: String = "",
     val summaryMessage: String
 )
 
@@ -87,6 +89,8 @@ object DexApkInspector {
         var encryptedAssetCount = 0
         var hasManifest = false
         var hasSignature = false
+        var detectedPkg = ""
+        var detectedApp = ""
 
         ZipInputStream(inputStream.buffered()).use { zis ->
             var entry = zis.nextEntry
@@ -99,7 +103,15 @@ object DexApkInspector {
                             val bytes = zis.readBytes()
                             dexReports.add(parseDexBytes(name, bytes))
                         }
-                        name == "AndroidManifest.xml" -> hasManifest = true
+                        name == "AndroidManifest.xml" -> {
+                            hasManifest = true
+                            val mBytes = zis.readBytes()
+                            val info = AxmlManifestPatcher.inspectBinaryManifest(mBytes)
+                            if (info.isValidBinaryAxml) {
+                                detectedPkg = info.packageName
+                                detectedApp = info.originalApplicationClass
+                            }
+                        }
                         name.startsWith("META-INF/") &&
                             (name.endsWith(".RSA") || name.endsWith(".DSA") || name.endsWith(".EC")) -> {
                             hasSignature = true
@@ -140,6 +152,8 @@ object DexApkInspector {
             nativeLibArchitectures = nativeAbis.toList(),
             hasManifest = hasManifest,
             hasSignatureBlock = hasSignature,
+            detectedPackageName = detectedPkg,
+            detectedAppClass = detectedApp,
             summaryMessage = summary
         )
     }

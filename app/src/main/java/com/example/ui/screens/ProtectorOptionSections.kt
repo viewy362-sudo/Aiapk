@@ -276,16 +276,16 @@ fun ResourcesAndConfigAccordionCard(
                 showResources = !showResources
             }
         ) {
-            OptionRow("Shrink Resources (R8 / AAPT2)", "Strips unused resources and compacts ZIP table", profile.shrinkResources, "res_shrink_all") { c ->
+            OptionRow("Shrink Resources (Kit / R8 Config)", "Generates AAPT2 & R8 shrinkResources config in Developer Kit", profile.shrinkResources, "res_shrink_all") { c ->
                 onUpdateProfile { it.copy(shrinkResources = c) }
             }
-            OptionRow("Confuse Drawable, Anim & Color", "Obfuscates resource names across drawable/anim/color", profile.shrinkDrawablesAndAnim, "res_shrink_drawable") { c ->
+            OptionRow("Confuse Drawable, Anim & Color (Kit)", "Adds drawable/anim/color obfuscation rules to Developer Kit", profile.shrinkDrawablesAndAnim, "res_shrink_drawable") { c ->
                 onUpdateProfile { it.copy(shrinkDrawablesAndAnim = c) }
             }
-            OptionRow("Confuse Layout, Font, Raw & XML", "Hides layout, raw, font, menu & navigation XML IDs", profile.shrinkLayoutsAndXml, "res_shrink_layout") { c ->
+            OptionRow("Confuse Layout, Font, Raw & XML (Kit)", "Adds layout/raw/font/xml R8 rules to Developer Kit", profile.shrinkLayoutsAndXml, "res_shrink_layout") { c ->
                 onUpdateProfile { it.copy(shrinkLayoutsAndXml = c) }
             }
-            OptionRow("Strip Build & Debug Metadata", "Removes DebugProbesKt.bin & build version metadata", profile.stripDebugMetadata, "res_strip_debug") { c ->
+            OptionRow("Strip Build & Debug Metadata (APK)", "Directly removes DebugProbesKt.bin & build metadata from output APK", profile.stripDebugMetadata, "res_strip_debug") { c ->
                 onUpdateProfile { it.copy(stripDebugMetadata = c) }
             }
         }

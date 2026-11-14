@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import com.example.security.ApkSignerEngine
 import com.example.security.AppProtectorPipeline
+import com.example.security.AxmlManifestPatcher
 import com.example.security.CryptoVaultEngine
 import com.example.security.DexApkInspector
 import com.example.security.DexPackerEngine
@@ -235,6 +236,66 @@ class SecurityEnginesUnitTest {
         val current = AppThemePreset.CRIMSON_FORGE
         val shuffled = AppThemePreset.randomDifferentFrom(current)
         assertNotEquals(current, shuffled)
+    }
+
+    @Test
+    fun compiledStubDexAndBinaryAxmlPatchingEndToEnd() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stubDexBytes = context.assets.open("bloody_stub.dex").use { it.readBytes() }
+        val stubReport = DexApkInspector.parseDexBytes("classes.dex", stubDexBytes)
+        assertTrue("bloody_stub.dex must be valid Dalvik DEX", stubReport.dexVersion.startsWith("DEX "))
+        assertTrue(stubReport.withinDalvik65kLimit)
+
+        // Locate real compiled binary AndroidManifest.xml from existing debug APK if present
+        val debugApk = File("build/outputs/apk/debug/app-debug.apk").let { f ->
+            if (f.exists()) f else File("app/build/outputs/apk/debug/app-debug.apk")
+        }
+        if (debugApk.exists()) {
+            val realManifestBytes = ZipFile(debugApk).use { zf ->
+                zf.getInputStream(zf.getEntry("AndroidManifest.xml")).readBytes()
+            }
+            val parsedOrig = AxmlManifestPatcher.inspectBinaryManifest(realManifestBytes)
+            assertTrue(parsedOrig.isValidBinaryAxml)
+            assertTrue(parsedOrig.packageName.isNotBlank())
+
+            val patched = AxmlManifestPatcher.patchApplicationStub(realManifestBytes)
+            val reParsed = AxmlManifestPatcher.inspectBinaryManifest(patched.patchedBytes)
+            assertTrue(reParsed.isValidBinaryAxml)
+            assertEquals(parsedOrig.packageName, reParsed.packageName)
+            assertEquals(AxmlManifestPatcher.STUB_APPLICATION_CLASS, reParsed.originalApplicationClass)
+
+            // Run full protection pipeline on real APK and verify Stub DEX + Encrypted DEX Vault + v1/v2 Signatures
+            val profile = ProtectionProfile(
+                appName = "Bloody Team",
+                packageName = parsedOrig.packageName,
+                signOutputApk = true,
+                nativeJniStubPacking = true,
+                dexBytecodeGuard = true
+            )
+            val artifact = AppProtectorPipeline.protectArchive(
+                context = context,
+                inputUri = Uri.fromFile(debugApk),
+                inputFileName = "app-debug.apk",
+                profile = profile,
+                passphrase = "RealApkPass#2026",
+                secretToHide = "live_token_123",
+                onStep = {}
+            )
+            assertTrue(artifact.stubDexInjected)
+            assertTrue(artifact.manifestPatched)
+            assertEquals(parsedOrig.packageName, artifact.detectedPackageName)
+            assertTrue(artifact.signedVerification?.v2RsaVerified == true)
+
+            ZipFile(artifact.primaryOutputFile).use { outApk ->
+                val outClassesDex = outApk.getInputStream(outApk.getEntry("classes.dex")).readBytes()
+                assertArrayEquals(stubDexBytes, outClassesDex)
+
+                val packedAsset = outApk.getInputStream(outApk.getEntry("assets/bloody_wall/tex_atlas_0.png")).readBytes()
+                val unpackedDex = DexPackerEngine.unpackDexEntry(packedAsset, "RealApkPass#2026", 0)
+                val origDex = ZipFile(debugApk).use { it.getInputStream(it.getEntry("classes.dex")).readBytes() }
+                assertArrayEquals(origDex, unpackedDex)
+            }
+        }
     }
 
     @Test

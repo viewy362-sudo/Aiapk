@@ -117,13 +117,19 @@ object ApkSignerEngine {
         identity: SigningIdentity,
         outputFile: File
     ): ApkSignatureVerificationResult {
-        val cleanEntries = entries.filter { e ->
-            val upper = e.name.uppercase()
-            !(upper == "META-INF/MANIFEST.MF" ||
-                upper.endsWith(".SF") && upper.startsWith("META-INF/") ||
-                upper.endsWith(".RSA") && upper.startsWith("META-INF/") ||
-                upper.endsWith(".DSA") && upper.startsWith("META-INF/") ||
-                upper.endsWith(".EC") && upper.startsWith("META-INF/"))
+        val seenNames = LinkedHashSet<String>()
+        val cleanEntries = ArrayList<ApkEntryData>(entries.size)
+        for (e in entries) {
+            val cleanName = e.name.trimStart('/')
+            if (cleanName.isBlank()) continue
+            val upper = cleanName.uppercase()
+            val isMetaSig = upper == "META-INF/MANIFEST.MF" ||
+                (upper.startsWith("META-INF/") &&
+                    (upper.endsWith(".SF") || upper.endsWith(".RSA") || upper.endsWith(".DSA") || upper.endsWith(".EC")))
+            if (isMetaSig) continue
+            if (seenNames.add(cleanName)) {
+                cleanEntries.add(if (cleanName == e.name) e else e.copy(name = cleanName))
+            }
         }
 
         // Step 1: Write ZipAligned entries + compute SHA-256 digests for MANIFEST.MF
