@@ -3,6 +3,11 @@ package com.example.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -28,13 +33,13 @@ import androidx.compose.material.icons.rounded.EnhancedEncryption
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.FolderZip
 import androidx.compose.material.icons.rounded.SaveAlt
-import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -49,12 +54,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.audio.SoundFxManager
 import com.example.security.ProtectionProfile
 import com.example.ui.ShieldUiState
 import com.example.ui.components.StatusPill
@@ -74,6 +82,8 @@ fun ProtectorStudioScreen(
     onSaveProtectedOutput: (Uri) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptic = LocalHapticFeedback.current
+
     val inputPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -101,12 +111,12 @@ fun ProtectorStudioScreen(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.large,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
                 ) {
                     Box(modifier = Modifier.fillMaxWidth()) {
                         Image(
-                            painter = painterResource(id = R.drawable.img_shield_hero),
-                            contentDescription = "App protector banner",
+                            painter = painterResource(id = R.drawable.img_bloody_hero),
+                            contentDescription = "Bloody Team forge banner",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.matchParentSize()
                         )
@@ -115,25 +125,25 @@ fun ProtectorStudioScreen(
                                 .matchParentSize()
                                 .background(
                                     Brush.verticalGradient(
-                                        listOf(Color(0xCC0B1220), Color(0xEE0B1220))
+                                        listOf(Color(0xBB09090D), Color(0xEC09090D))
                                     )
                                 )
                         )
                         Column(modifier = Modifier.padding(18.dp)) {
                             StatusPill(
-                                text = "${profile.enabledLayersCount}/10 PROTECTIONS SELECTED",
+                                text = "${profile.enabledLayersCount}/10 LAYERS • DEX PACKER",
                                 isPositive = profile.enabledLayersCount >= 6
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "App Protector Studio",
+                                text = "Bloody Team Forge",
                                 style = MaterialTheme.typography.headlineMedium,
                                 color = Color.White
                             )
                             Text(
-                                text = "Select your .apk or Sketchware project .zip, choose all security layers, encrypt assets & generate your protected output.",
+                                text = "Load .apk or Sketchware .zip, pack classes.dex into disguised assets with JNI + InMemoryDexClassLoader, and export your hardened bundle.",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFFCBD5E1)
+                                color = Color(0xFFD1D5DB)
                             )
                         }
                     }
@@ -153,7 +163,7 @@ fun ProtectorStudioScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = "Step 1 • Select Input Application",
+                            text = "Step 1 • Input Application (.apk / .zip)",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -164,6 +174,8 @@ fun ProtectorStudioScreen(
                         ) {
                             Button(
                                 onClick = {
+                                    SoundFxManager.playClick()
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     inputPicker.launch(
                                         arrayOf(
                                             "application/vnd.android.package-archive",
@@ -184,7 +196,10 @@ fun ProtectorStudioScreen(
                             }
 
                             OutlinedButton(
-                                onClick = onLoadSelfApk,
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onLoadSelfApk()
+                                },
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(48.dp)
@@ -196,23 +211,29 @@ fun ProtectorStudioScreen(
                             }
                         }
 
-                        uiState.selectedInputInspection?.let { info ->
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text(
-                                        text = "Loaded: ${uiState.selectedInputName}",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = MaterialTheme.colorScheme.secondary
-                                    )
-                                    Text(
-                                        text = "Size: ${info.totalArchiveSizeBytes / 1024} KB • Entries: ${info.totalEntries} • DEX: ${info.dexReports.size} • Assets: ${info.assetEntriesCount}",
-                                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = JetBrainsMonoFamily),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                        AnimatedVisibility(
+                            visible = uiState.selectedInputInspection != null,
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut() + shrinkVertically()
+                        ) {
+                            uiState.selectedInputInspection?.let { info ->
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            text = "Loaded: ${uiState.selectedInputName}",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.secondary
+                                        )
+                                        Text(
+                                            text = "Size: ${info.totalArchiveSizeBytes / 1024} KB • Entries: ${info.totalEntries} • DEX: ${info.dexReports.size} • Assets: ${info.assetEntriesCount}",
+                                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = JetBrainsMonoFamily),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -220,7 +241,7 @@ fun ProtectorStudioScreen(
                 }
             }
 
-            // STEP 2: Target Details & Keys
+            // STEP 2: Target Details, Disguise Extension & Keys
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -233,7 +254,7 @@ fun ProtectorStudioScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = "Step 2 • Target App & Encryption Keys",
+                            text = "Step 2 • Target Profile, DEX Disguise & Keys",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -259,6 +280,30 @@ fun ProtectorStudioScreen(
                             )
                         }
 
+                        Text(
+                            text = "Disguise Packed classes.dex As:",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            listOf(".png", ".dat", ".bin").forEach { ext ->
+                                FilterChip(
+                                    selected = profile.dexDisguiseExtension == ext,
+                                    onClick = {
+                                        SoundFxManager.playToggle(true)
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onUpdateProfile { it.copy(dexDisguiseExtension = ext) }
+                                    },
+                                    label = { Text(ext) },
+                                    modifier = Modifier.testTag("forge_disguise_${ext.removePrefix(".")}")
+                                )
+                            }
+                        }
+
                         OutlinedTextField(
                             value = uiState.protectorPassphrase,
                             onValueChange = { onUpdateProtectorInputs(it, uiState.protectorSecretKey) },
@@ -272,7 +317,7 @@ fun ProtectorStudioScreen(
                         OutlinedTextField(
                             value = uiState.protectorSecretKey,
                             onValueChange = { onUpdateProtectorInputs(uiState.protectorPassphrase, it) },
-                            label = { Text("Sensitive API Key / Secret to Obfuscate") },
+                            label = { Text("Sensitive API Key / Secret to Hide") },
                             singleLine = true,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -294,7 +339,10 @@ fun ProtectorStudioScreen(
                                     .testTag("protector_sha_input")
                             )
                             FilledTonalButton(
-                                onClick = onAdoptDeviceCert,
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onAdoptDeviceCert()
+                                },
                                 modifier = Modifier
                                     .height(54.dp)
                                     .testTag("protector_adopt_cert_button")
@@ -306,7 +354,7 @@ fun ProtectorStudioScreen(
                 }
             }
 
-            // STEP 3: Select All 10 Security Options
+            // STEP 3: Select Security Options
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -321,12 +369,15 @@ fun ProtectorStudioScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Step 3 • Security Options (${profile.enabledLayersCount}/10)",
+                                text = "Step 3 • Security Layers (${profile.enabledLayersCount}/10)",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.secondary
                             )
                             TextButton(
-                                onClick = { onSelectAllLayers(profile.enabledLayersCount < 10) },
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onSelectAllLayers(profile.enabledLayersCount < 10)
+                                },
                                 modifier = Modifier.testTag("protector_toggle_all_button")
                             ) {
                                 Text(if (profile.enabledLayersCount < 10) "Select All" else "Clear All")
@@ -334,74 +385,125 @@ fun ProtectorStudioScreen(
                         }
 
                         SecurityOptionCheckRow(
-                            title = "1. DEX Bytecode & 65K Method Guard",
-                            subtitle = "SHA-256 DEX lock + R8 Dalvik overflow protection",
+                            title = "1. DEX Packing & 65K Method Guard",
+                            subtitle = "Encrypts classes*.dex into disguised ${profile.dexDisguiseExtension} assets",
                             checked = profile.dexBytecodeGuard,
                             testTag = "opt_dex",
-                            onCheckedChange = { c -> onUpdateProfile { it.copy(dexBytecodeGuard = c) } }
+                            onCheckedChange = { c ->
+                                SoundFxManager.playToggle(c)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onUpdateProfile { it.copy(dexBytecodeGuard = c) }
+                            }
+                        )
+                        SecurityOptionCheckRow(
+                            title = "Native C++ JNI + InMemoryDexClassLoader Stub",
+                            subtitle = "Generates Phase B RAM-only loader & Manifest stub patch",
+                            checked = profile.nativeJniStubPacking,
+                            testTag = "opt_native_stub",
+                            onCheckedChange = { c ->
+                                SoundFxManager.playToggle(c)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onUpdateProfile { it.copy(nativeJniStubPacking = c) }
+                            }
                         )
                         SecurityOptionCheckRow(
                             title = "2. Asset & Resource AES-256-GCM",
                             subtitle = "Encrypts all assets/*.json/media into DXS1 .enc files",
                             checked = profile.assetAes256Encryption,
                             testTag = "opt_asset",
-                            onCheckedChange = { c -> onUpdateProfile { it.copy(assetAes256Encryption = c) } }
+                            onCheckedChange = { c ->
+                                SoundFxManager.playToggle(c)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onUpdateProfile { it.copy(assetAes256Encryption = c) }
+                            }
                         )
                         SecurityOptionCheckRow(
                             title = "3. Anti-Tamper & Signature Lock",
                             subtitle = "Blocks re-signed or repackaged APKs",
                             checked = profile.antiTamperSignature,
                             testTag = "opt_tamper",
-                            onCheckedChange = { c -> onUpdateProfile { it.copy(antiTamperSignature = c) } }
+                            onCheckedChange = { c ->
+                                SoundFxManager.playToggle(c)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onUpdateProfile { it.copy(antiTamperSignature = c) }
+                            }
                         )
                         SecurityOptionCheckRow(
                             title = "4. Anti-Debug & Frida / Xposed Shield",
                             subtitle = "TracerPid + /proc/self/maps hook & debugger blocker",
                             checked = profile.antiDebugFridaShield,
                             testTag = "opt_frida",
-                            onCheckedChange = { c -> onUpdateProfile { it.copy(antiDebugFridaShield = c) } }
+                            onCheckedChange = { c ->
+                                SoundFxManager.playToggle(c)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onUpdateProfile { it.copy(antiDebugFridaShield = c) }
+                            }
                         )
                         SecurityOptionCheckRow(
                             title = "5. String & API Key Obfuscation",
                             subtitle = "XOR + bit-rotation vault (zero plaintext in DEX)",
                             checked = profile.stringMetadataObfuscation,
                             testTag = "opt_strings",
-                            onCheckedChange = { c -> onUpdateProfile { it.copy(stringMetadataObfuscation = c) } }
+                            onCheckedChange = { c ->
+                                SoundFxManager.playToggle(c)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onUpdateProfile { it.copy(stringMetadataObfuscation = c) }
+                            }
                         )
                         SecurityOptionCheckRow(
                             title = "6. Zero-Crash & ANR Exception Guard",
                             subtitle = "Global thread handler preventing runtime crashes",
                             checked = profile.zeroCrashExceptionGuard,
                             testTag = "opt_crash",
-                            onCheckedChange = { c -> onUpdateProfile { it.copy(zeroCrashExceptionGuard = c) } }
+                            onCheckedChange = { c ->
+                                SoundFxManager.playToggle(c)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onUpdateProfile { it.copy(zeroCrashExceptionGuard = c) }
+                            }
                         )
                         SecurityOptionCheckRow(
                             title = "7. Root & Magisk Environment Shield",
                             subtitle = "Blocks su binaries, Magisk & test-keys environments",
                             checked = profile.rootMagiskDetection,
                             testTag = "opt_root",
-                            onCheckedChange = { c -> onUpdateProfile { it.copy(rootMagiskDetection = c) } }
+                            onCheckedChange = { c ->
+                                SoundFxManager.playToggle(c)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onUpdateProfile { it.copy(rootMagiskDetection = c) }
+                            }
                         )
                         SecurityOptionCheckRow(
                             title = "8. Emulator & Virtual-Clone Blocker",
                             subtitle = "Blocks QEMU/emulators & Parallel Space app cloners",
                             checked = profile.emulatorCloneShield,
                             testTag = "opt_emulator",
-                            onCheckedChange = { c -> onUpdateProfile { it.copy(emulatorCloneShield = c) } }
+                            onCheckedChange = { c ->
+                                SoundFxManager.playToggle(c)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onUpdateProfile { it.copy(emulatorCloneShield = c) }
+                            }
                         )
                         SecurityOptionCheckRow(
                             title = "9. SSL Pinning & Proxy/VPN Sniffer Block",
                             subtitle = "SPKI cert pinning + HTTP proxy & tun0/ppp0 block",
                             checked = profile.sslPinningProxyBlock,
                             testTag = "opt_ssl",
-                            onCheckedChange = { c -> onUpdateProfile { it.copy(sslPinningProxyBlock = c) } }
+                            onCheckedChange = { c ->
+                                SoundFxManager.playToggle(c)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onUpdateProfile { it.copy(sslPinningProxyBlock = c) }
+                            }
                         )
                         SecurityOptionCheckRow(
                             title = "10. Screenshot & Tapjacking Shield",
                             subtitle = "Enforces FLAG_SECURE + obscured touch filtering",
                             checked = profile.screenTapjackingShield,
                             testTag = "opt_screen",
-                            onCheckedChange = { c -> onUpdateProfile { it.copy(screenTapjackingShield = c) } }
+                            onCheckedChange = { c ->
+                                SoundFxManager.playToggle(c)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onUpdateProfile { it.copy(screenTapjackingShield = c) }
+                            }
                         )
                     }
                 }
@@ -427,7 +529,10 @@ fun ProtectorStudioScreen(
             // STEP 4: Run Protection & Download Output
             item {
                 Button(
-                    onClick = onRunProtection,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onRunProtection()
+                    },
                     enabled = !uiState.isProtecting,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
@@ -441,7 +546,7 @@ fun ProtectorStudioScreen(
                     Icon(Icons.Rounded.EnhancedEncryption, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (uiState.isProtecting) "Encrypting & Protecting..." else "Encrypt & Build Protected Output",
+                        text = if (uiState.isProtecting) "Forging Protected App..." else "Encrypt & Build Protected Output",
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                     )
                 }
@@ -457,8 +562,11 @@ fun ProtectorStudioScreen(
                 }
             }
 
-            if (uiState.protectionSteps.isNotEmpty()) {
-                item {
+            item {
+                AnimatedVisibility(
+                    visible = uiState.protectionSteps.isNotEmpty(),
+                    enter = fadeIn() + expandVertically()
+                ) {
                     Surface(
                         shape = MaterialTheme.shapes.small,
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -470,7 +578,7 @@ fun ProtectorStudioScreen(
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(
-                                text = "Protection Pipeline Log",
+                                text = "Forge Pipeline Execution Log",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.secondary
                             )
@@ -486,55 +594,56 @@ fun ProtectorStudioScreen(
                 }
             }
 
-            uiState.protectedOutput?.let { out ->
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = MaterialTheme.shapes.medium,
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+            item {
+                AnimatedVisibility(
+                    visible = uiState.protectedOutput != null,
+                    enter = fadeIn() + expandVertically()
+                ) {
+                    uiState.protectedOutput?.let { out ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.medium,
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Rounded.CheckCircle,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Rounded.CheckCircle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.secondary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Protected Output Forged!",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                                 Text(
-                                    text = "Protected Output Ready!",
-                                    style = MaterialTheme.typography.titleMedium,
+                                    text = "Archive: ${out.suggestedOutputName} (${out.outputSizeBytes / 1024} KB)\n" +
+                                        "Packed DEX -> Disguised: ${out.packedDexCount} ${out.disguisedDexNames}\n" +
+                                        "Encrypted Assets: ${out.encryptedAssetsCount} • Security Files: ${out.injectedSecurityFilesCount}",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily),
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
-                            }
-                            Text(
-                                text = "Output: ${out.suggestedOutputName} (${out.outputSizeBytes / 1024} KB)\n" +
-                                    "Encrypted Assets: ${out.encryptedAssetsCount} • Injected Security Modules: ${out.injectedSecurityFilesCount}\n" +
-                                    "DEX Lock: ${out.primaryDexSha256Short.ifEmpty { "Source Bundle" }}",
-                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFamily),
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            if (out.isApkInput) {
-                                Text(
-                                    text = "Contains AES-256-GCM encrypted assets, DEX integrity lock & drop-in 10-layer security patch for zero-crash rebuild.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Button(
-                                onClick = { outputSaver.launch(out.suggestedOutputName) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(50.dp)
-                                    .testTag("save_protected_output_button")
-                            ) {
-                                Icon(Icons.Rounded.SaveAlt, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Save ${out.suggestedOutputName}")
+                                Button(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        outputSaver.launch(out.suggestedOutputName)
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(50.dp)
+                                        .testTag("save_protected_output_button")
+                                ) {
+                                    Icon(Icons.Rounded.SaveAlt, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Save ${out.suggestedOutputName}")
+                                }
                             }
                         }
                     }

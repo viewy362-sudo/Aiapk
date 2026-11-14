@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "DexShield"
+rootProject.name = "Bloody Team"
 
 include(":app")

@@ -135,12 +135,44 @@ class SecurityEnginesUnitTest {
             val decrypted = String(CryptoVaultEngine.decryptBytes(encBytes, "TestPass#2026"), Charsets.UTF_8)
             assertEquals(assetText, decrypted)
 
-            assertTrue(outZip.getEntry("dexshield_security/java/com/bloodyteam/app/security/DexShieldGuard.java") != null)
-            assertTrue(outZip.getEntry("dexshield_security/java/com/bloodyteam/app/security/AssetVaultHelper.java") != null)
-            assertTrue(outZip.getEntry("dexshield_security/java/com/bloodyteam/app/security/SslPinningGuard.java") != null)
-            assertTrue(outZip.getEntry("dexshield_security/java/com/bloodyteam/app/security/StringVault.java") != null)
-            assertTrue(outZip.getEntry("dexshield_security/proguard-rules.pro") != null)
+            assertTrue(outZip.getEntry("bloody_security/java/com/bloodyteam/app/security/DexShieldGuard.java") != null)
+            assertTrue(outZip.getEntry("bloody_security/java/com/bloodyteam/app/security/AssetVaultHelper.java") != null)
+            assertTrue(outZip.getEntry("bloody_security/java/com/bloodyteam/app/security/SslPinningGuard.java") != null)
+            assertTrue(outZip.getEntry("bloody_security/java/com/bloodyteam/app/security/StringVault.java") != null)
+            assertTrue(outZip.getEntry("bloody_security/proguard-rules.pro") != null)
+            assertTrue(outZip.getEntry("bloody_security/dex_packing_manifest.json") != null)
+            assertTrue(outZip.getEntry("native_jni/dex_shield_jni.cpp") != null)
+            assertTrue(outZip.getEntry("native_jni/CMakeLists.txt") != null)
+            assertTrue(outZip.getEntry("stub/com/bloodyteam/app/stub/DexStubApplication.java") != null)
         }
+    }
+
+    @Test
+    fun dexPackerDisguiseAndJniStubGeneration() {
+        val fakeDex = ByteArray(512)
+        "dex\n038\u0000".toByteArray(Charsets.US_ASCII).copyInto(fakeDex, 0)
+        for (i in 8 until fakeDex.size) fakeDex[i] = (i and 0xFF).toByte()
+
+        val packed = com.example.security.DexPackerEngine.packDexEntry(
+            dexEntryName = "classes.dex",
+            dexBytes = fakeDex,
+            passphrase = "BloodyPass#99",
+            disguiseExtension = ".png",
+            index = 0
+        )
+        assertEquals("tex_atlas_0.png", packed.disguisedAssetName)
+        val unpacked = com.example.security.DexPackerEngine.unpackDexEntry(
+            packedBytes = packed.packedBytes,
+            passphrase = "BloodyPass#99",
+            index = 0
+        )
+        assertArrayEquals(fakeDex, unpacked)
+
+        val profile = ProtectionProfile(appName = "Bloody Team", packageName = "com.bloodyteam.app")
+        val cpp = com.example.security.DexPackerEngine.generateNativeJniCpp(profile)
+        val stub = com.example.security.DexPackerEngine.generateStubApplicationJava(profile)
+        assertTrue(cpp.contains("Java_com_bloodyteam_app_stub_DexStubApplication_nativeDecryptDexToRam"))
+        assertTrue(stub.contains("InMemoryDexClassLoader"))
     }
 
     @Test

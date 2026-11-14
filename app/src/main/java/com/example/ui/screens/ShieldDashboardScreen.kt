@@ -304,8 +304,8 @@ private fun HeroProtectionBanner(
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
             Image(
-                painter = painterResource(id = R.drawable.img_shield_hero),
-                contentDescription = "DexShield security vault background",
+                painter = painterResource(id = R.drawable.img_bloody_hero),
+                contentDescription = "Bloody Team security vault background",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.matchParentSize()
             )

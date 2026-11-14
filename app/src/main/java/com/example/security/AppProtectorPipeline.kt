@@ -17,6 +17,8 @@ data class ProtectedBuildArtifact(
     val suggestedOutputName: String,
     val outputSizeBytes: Long,
     val encryptedAssetsCount: Int,
+    val packedDexCount: Int,
+    val disguisedDexNames: List<String>,
     val preservedEntriesCount: Int,
     val injectedSecurityFilesCount: Int,
     val dexCount: Int,
@@ -25,10 +27,13 @@ data class ProtectedBuildArtifact(
 )
 
 /**
- * Real End-to-End Application Protection Pipeline.
- * Reads a user-selected .apk or .zip archive, inspects DEX/assets, encrypts assets
- * with AES-256-GCM (DXS1), obfuscates secrets, injects customized 10-layer Java/R8
- * security modules, and writes a real protected output .zip archive ready for export.
+ * Real End-to-End Application Protection Pipeline (Bloody Team).
+ * Phase A Build-Time:
+ *  - Parses input .apk or .zip
+ *  - Encrypts & disguises classes*.dex into assets/ (e.g. .png / .dat / .bin)
+ *  - Encrypts assets/ files with AES-256-GCM (DXS1)
+ *  - Generates C++ JNI Native Decryptor, InMemoryDexClassLoader Stub, Manifest Patch,
+ *    10-layer Java guards, StringVault, and hardened R8/ProGuard rules.
  */
 object AppProtectorPipeline {
 
@@ -51,22 +56,24 @@ object AppProtectorPipeline {
 
         val isApk = inputFileName.lowercase().endsWith(".apk")
         val baseName = inputFileName.substringBeforeLast(".").ifBlank { "app" }
-        val suggestedOut = if (isApk) "${baseName}_shielded_bundle.zip" else "${baseName}_protected.zip"
-        val outFile = File(context.cacheDir, "dexshield_protected_output.zip")
+        val suggestedOut = if (isApk) "${baseName}_bloody_protected.zip" else "${baseName}_protected.zip"
+        val outFile = File(context.cacheDir, "bloody_protected_output.zip")
 
-        log("1/6 Analyzing input archive: $inputFileName")
+        log("1/7 Inspecting archive: $inputFileName")
         val inspection = DexApkInspector.inspectUri(context, inputUri, inputFileName)
         val primaryDexSha = inspection.dexReports.firstOrNull()?.sha256Short.orEmpty()
         log("   Found ${inspection.dexReports.size} DEX file(s), ${inspection.assetEntriesCount} asset(s).")
 
         var encryptedAssets = 0
+        var packedDexCount = 0
+        val disguisedDexNames = mutableListOf<String>()
         var preservedEntries = 0
         var injectedFiles = 0
 
         val pkgPath = profile.packageName.replace('.', '/')
 
         ZipOutputStream(FileOutputStream(outFile).buffered()).use { zos ->
-            log("2/6 Processing archive entries & encrypting assets (AES-256-GCM)...")
+            log("2/7 Encrypting assets & packing classes*.dex (${profile.dexDisguiseExtension} disguise)...")
             context.contentResolver.openInputStream(inputUri)?.use { rawIn ->
                 ZipInputStream(rawIn.buffered()).use { zis ->
                     var entry = zis.nextEntry
@@ -74,22 +81,38 @@ object AppProtectorPipeline {
                         val name = entry.name
                         if (!entry.isDirectory) {
                             val data = zis.readBytes()
+                            val isDex = name.matches(Regex("^classes\\d*\\.dex$"))
                             val isAsset = (name.startsWith("assets/") || name.contains("/assets/")) &&
                                 !name.endsWith(".enc")
 
-                            if (profile.assetAes256Encryption && isAsset && data.isNotEmpty()) {
-                                val enc = CryptoVaultEngine.encryptBytes(data, passphrase)
-                                val targetPath = if (isApk) {
-                                    "protected_assets/${name.removePrefix("assets/")}.enc"
-                                } else {
-                                    "$name.enc"
+                            when {
+                                isDex && profile.dexBytecodeGuard && data.isNotEmpty() -> {
+                                    val packed = DexPackerEngine.packDexEntry(
+                                        dexEntryName = name,
+                                        dexBytes = data,
+                                        passphrase = passphrase,
+                                        disguiseExtension = profile.dexDisguiseExtension,
+                                        index = packedDexCount
+                                    )
+                                    val targetPath = "disguised_dex_assets/${packed.disguisedAssetName}"
+                                    writeZipEntry(zos, targetPath, packed.packedBytes)
+                                    disguisedDexNames.add(packed.disguisedAssetName)
+                                    packedDexCount++
                                 }
-                                writeZipEntry(zos, targetPath, enc.cipherBytes)
-                                encryptedAssets++
-                            } else if (!isApk) {
-                                // Keep original project source/resource files intact in project zip
-                                writeZipEntry(zos, name, data)
-                                preservedEntries++
+                                profile.assetAes256Encryption && isAsset && data.isNotEmpty() -> {
+                                    val enc = CryptoVaultEngine.encryptBytes(data, passphrase)
+                                    val targetPath = if (isApk) {
+                                        "protected_assets/${name.removePrefix("assets/")}.enc"
+                                    } else {
+                                        "$name.enc"
+                                    }
+                                    writeZipEntry(zos, targetPath, enc.cipherBytes)
+                                    encryptedAssets++
+                                }
+                                !isApk -> {
+                                    writeZipEntry(zos, name, data)
+                                    preservedEntries++
+                                }
                             }
                         }
                         zis.closeEntry()
@@ -98,15 +121,16 @@ object AppProtectorPipeline {
                 }
             } ?: throw IllegalStateException("Unable to read input archive")
 
-            log("   Encrypted $encryptedAssets asset(s) using DXS1 AES-256-GCM envelope.")
+            log("   Packed $packedDexCount DEX file(s) -> $disguisedDexNames")
+            log("   Encrypted $encryptedAssets asset(s) using AES-256-GCM.")
 
             val securityPrefix = if (isApk) {
                 "security_patch/$pkgPath/security"
             } else {
-                "dexshield_security/java/$pkgPath/security"
+                "bloody_security/java/$pkgPath/security"
             }
 
-            log("3/6 Injecting 10-layer Java protection classes (${profile.enabledLayersCount}/10 active)...")
+            log("3/7 Generating 10-layer Java protection suite (${profile.enabledLayersCount}/10)...")
             val guardJava = SketchwareKitGenerator.generateSketchwareJavaGuard(profile, primaryDexSha)
             writeZipEntry(zos, "$securityPrefix/DexShieldGuard.java", guardJava.toByteArray(Charsets.UTF_8))
             injectedFiles++
@@ -123,8 +147,23 @@ object AppProtectorPipeline {
                 injectedFiles++
             }
 
+            if (profile.nativeJniStubPacking) {
+                log("4/7 Generating NDK C++ JNI decryptor & InMemoryDexClassLoader Stub...")
+                val cpp = DexPackerEngine.generateNativeJniCpp(profile)
+                val cmake = DexPackerEngine.generateCMakeLists()
+                val stubJava = DexPackerEngine.generateStubApplicationJava(profile)
+                val manifestPatch = DexPackerEngine.generateManifestStubPatch(profile)
+                writeZipEntry(zos, "native_jni/dex_shield_jni.cpp", cpp.toByteArray(Charsets.UTF_8))
+                writeZipEntry(zos, "native_jni/CMakeLists.txt", cmake.toByteArray(Charsets.UTF_8))
+                writeZipEntry(zos, "stub/$pkgPath/stub/DexStubApplication.java", stubJava.toByteArray(Charsets.UTF_8))
+                writeZipEntry(zos, "stub/AndroidManifest_stub_patch.xml", manifestPatch.toByteArray(Charsets.UTF_8))
+                injectedFiles += 4
+            } else {
+                log("4/7 Native JNI & Stub generation skipped.")
+            }
+
             if (profile.stringMetadataObfuscation && secretToHide.isNotEmpty()) {
-                log("4/6 Obfuscating sensitive keys into zero-plaintext StringVault.java...")
+                log("5/7 Obfuscating API keys into StringVault.java (zero plaintext)...")
                 val obf = StringObfuscatorEngine.obfuscate(secretToHide, "getProtectedSecret")
                 val vaultClass = buildString {
                     appendLine("package ${profile.packageName}.security;")
@@ -137,12 +176,12 @@ object AppProtectorPipeline {
                 writeZipEntry(zos, "$securityPrefix/StringVault.java", vaultClass.toByteArray(Charsets.UTF_8))
                 injectedFiles++
             } else {
-                log("4/6 String obfuscation skipped or no secret provided.")
+                log("5/7 StringVault generation skipped.")
             }
 
-            log("5/6 Writing hardened R8/ProGuard rules & integrity manifest...")
+            log("6/7 Writing R8/ProGuard hardening rules & packing manifest...")
             val proguard = SketchwareKitGenerator.generateProguardRules(profile)
-            writeZipEntry(zos, "dexshield_security/proguard-rules.pro", proguard.toByteArray(Charsets.UTF_8))
+            writeZipEntry(zos, "bloody_security/proguard-rules.pro", proguard.toByteArray(Charsets.UTF_8))
             injectedFiles++
 
             val manifestJson = JSONObject().apply {
@@ -150,6 +189,8 @@ object AppProtectorPipeline {
                 put("packageName", profile.packageName)
                 put("inputFile", inputFileName)
                 put("enabledLayers", profile.enabledLayersCount)
+                put("packedDexCount", packedDexCount)
+                put("disguisedDexAssets", JSONArray(disguisedDexNames))
                 put("encryptedAssets", encryptedAssets)
                 put("dexReports", JSONArray().apply {
                     inspection.dexReports.forEach { d ->
@@ -163,27 +204,11 @@ object AppProtectorPipeline {
                     }
                 })
             }.toString(2)
-            writeZipEntry(zos, "dexshield_security/dexshield_integrity.json", manifestJson.toByteArray(Charsets.UTF_8))
-            injectedFiles++
-
-            val guide = buildString {
-                appendLine("=== DexShield Protection Output Summary ===")
-                appendLine("Target App: ${profile.appName} (${profile.packageName})")
-                appendLine("Enabled Security Layers: ${profile.enabledLayersCount} / 10")
-                appendLine("Encrypted Assets (AES-256-GCM): $encryptedAssets")
-                appendLine("Primary DEX SHA-256 Lock: ${primaryDexSha.ifEmpty { "N/A (Source Project)" }}")
-                appendLine()
-                appendLine("Integration:")
-                appendLine("1. Copy files under $securityPrefix/ into your Sketchware / Android src folder.")
-                appendLine("2. Call DexShieldGuard.activateAll(this); inside MainActivity.onCreate().")
-                appendLine("3. Use AssetVaultHelper.decryptAsset(context, \"file.enc\", passphrase) for encrypted assets.")
-                appendLine("4. Merge dexshield_security/proguard-rules.pro into your release build.")
-            }
-            writeZipEntry(zos, "dexshield_security/README_INTEGRATION.txt", guide.toByteArray(Charsets.UTF_8))
+            writeZipEntry(zos, "bloody_security/dex_packing_manifest.json", manifestJson.toByteArray(Charsets.UTF_8))
             injectedFiles++
         }
 
-        log("6/6 Protected package built (${outFile.length()} bytes). Ready to save!")
+        log("7/7 Protected package forged (${outFile.length()} bytes). Ready to save!")
 
         return ProtectedBuildArtifact(
             inputFileName = inputFileName,
@@ -192,6 +217,8 @@ object AppProtectorPipeline {
             suggestedOutputName = suggestedOut,
             outputSizeBytes = outFile.length(),
             encryptedAssetsCount = encryptedAssets,
+            packedDexCount = packedDexCount,
+            disguisedDexNames = disguisedDexNames,
             preservedEntriesCount = preservedEntries,
             injectedSecurityFilesCount = injectedFiles,
             dexCount = inspection.dexReports.size,

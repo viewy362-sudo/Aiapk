@@ -1,6 +1,6 @@
 {
-  "name": "DexShield",
-  "description": "Android & Sketchware Pro 6-layer app security hardening, DEX analyzer, AES-256 asset vault, anti-tamper, anti-hook shield, string obfuscator, and zero-crash exception guard.",
+  "name": "Bloody Team",
+  "description": "Android & Sketchware Pro DEX packing, AES-256-GCM encryption, JNI/InMemoryDexClassLoader architecture, 10-layer anti-tamper & anti-hook security suite.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

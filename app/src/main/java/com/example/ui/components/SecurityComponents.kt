@@ -1,6 +1,11 @@
 package com.example.ui.components
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -33,15 +38,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.audio.SoundFxManager
+import com.example.ui.theme.EmeraldVerified
 import com.example.ui.theme.JetBrainsMonoFamily
 
 @Composable
@@ -52,22 +60,37 @@ fun ShieldScoreRing(
 ) {
     val animatedProgress by animateFloatAsState(
         targetValue = (score.coerceIn(0, 100) / 100f),
-        animationSpec = tween(durationMillis = 700),
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 220f),
         label = "shield_score_progress"
     )
+    val pulseTransition = rememberInfiniteTransition(label = "radar_pulse")
+    val pulseAlpha by pulseTransition.animateFloat(
+        initialValue = 0.18f,
+        targetValue = 0.55f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse_alpha"
+    )
+
     val trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
     val activeColor = when {
-        score >= 80 -> MaterialTheme.colorScheme.primary
-        score >= 50 -> MaterialTheme.colorScheme.tertiary
-        else -> MaterialTheme.colorScheme.error
+        score >= 80 -> EmeraldVerified
+        score >= 50 -> MaterialTheme.colorScheme.secondary
+        else -> MaterialTheme.colorScheme.primary
     }
 
     Box(
-        modifier = modifier.size(92.dp),
+        modifier = modifier.size(96.dp),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.size(84.dp)) {
-            val stroke = Stroke(width = 9.dp.toPx(), cap = StrokeCap.Round)
+        Canvas(modifier = Modifier.size(88.dp)) {
+            drawCircle(
+                color = activeColor.copy(alpha = pulseAlpha * 0.25f),
+                radius = size.minDimension / 2f
+            )
+            val stroke = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round)
             drawArc(
                 color = trackColor,
                 startAngle = 0f,
@@ -105,14 +128,14 @@ fun StatusPill(
     modifier: Modifier = Modifier
 ) {
     val bg = if (isPositive) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
         MaterialTheme.colorScheme.tertiaryContainer
+    } else {
+        MaterialTheme.colorScheme.primaryContainer
     }
     val fg = if (isPositive) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
         MaterialTheme.colorScheme.onTertiaryContainer
+    } else {
+        MaterialTheme.colorScheme.onPrimaryContainer
     }
 
     Surface(
@@ -157,9 +180,9 @@ fun SecurityLayerCard(
         border = BorderStroke(
             width = 1.dp,
             color = if (isVerified) {
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+                EmeraldVerified.copy(alpha = 0.35f)
             } else {
-                MaterialTheme.colorScheme.tertiary.copy(alpha = 0.45f)
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
             }
         )
     ) {
@@ -170,14 +193,14 @@ fun SecurityLayerCard(
             ) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.size(40.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = icon,
                             contentDescription = title,
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -200,7 +223,7 @@ fun SecurityLayerCard(
             }
             Spacer(modifier = Modifier.height(10.dp))
             Surface(
-                color = MaterialTheme.colorScheme.background.copy(alpha = 0.7f),
+                color = MaterialTheme.colorScheme.background.copy(alpha = 0.75f),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -224,12 +247,13 @@ fun MonospaceCodePanel(
     modifier: Modifier = Modifier
 ) {
     val clipboard = LocalClipboardManager.current
+    val haptic = LocalHapticFeedback.current
 
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
     ) {
         Column {
             Row(
@@ -247,6 +271,8 @@ fun MonospaceCodePanel(
                 )
                 IconButton(
                     onClick = {
+                        SoundFxManager.playClick()
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         clipboard.setText(AnnotatedString(code))
                         onCopied()
                     },

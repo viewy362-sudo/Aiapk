@@ -3,14 +3,15 @@ package com.example.ui
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
-import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.audio.SoundFxManager
 import com.example.data.ProtectionPreferences
 import com.example.security.ApkInspectionReport
 import com.example.security.AppProtectorPipeline
 import com.example.security.CryptoVaultEngine
 import com.example.security.DexApkInspector
+import com.example.security.DexPackerEngine
 import com.example.security.GuardedFault
 import com.example.security.ObfuscatedStringResult
 import com.example.security.ProtectedBuildArtifact
@@ -31,6 +32,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 enum class VaultBinaryMode { ENCRYPT, DECRYPT }
 
@@ -43,6 +46,15 @@ data class BinaryVaultResult(
     val summary: String
 )
 
+data class DexRamTestResult(
+    val originalSize: Int,
+    val packedSize: Int,
+    val disguisedName: String,
+    val entropyBits: Double,
+    val roundTripVerified: Boolean,
+    val sha256Short: String
+)
+
 data class ShieldUiState(
     val isAuditing: Boolean = false,
     val runtimeReport: RuntimeShieldReport? = null,
@@ -50,21 +62,22 @@ data class ShieldUiState(
     val selectedInputUri: Uri? = null,
     val selectedInputName: String = "",
     val selectedInputInspection: ApkInspectionReport? = null,
-    val protectorPassphrase: String = "DexShield#2026!Vault",
-    val protectorSecretKey: String = "sk_live_protected_token_2026",
+    val protectorPassphrase: String = "BloodyTeam#2026!Key",
+    val protectorSecretKey: String = "sk_live_bloody_team_token_2026",
     val isProtecting: Boolean = false,
     val protectionSteps: List<String> = emptyList(),
     val protectedOutput: ProtectedBuildArtifact? = null,
     val protectorError: String? = null,
-    val plainVaultInput: String = "{\n  \"team\": \"BLOODY TEAM\",\n  \"apiEndpoint\": \"https://api.example.invalid/v2\",\n  \"antiTamper\": true\n}",
-    val vaultPassphrase: String = "DexShield#2026!Key",
+    val dexRamTest: DexRamTestResult? = null,
+    val plainVaultInput: String = "{\n  \"team\": \"Bloody Team\",\n  \"apiEndpoint\": \"https://api.example.invalid/v2\",\n  \"antiTamper\": true\n}",
+    val vaultPassphrase: String = "BloodyTeam#2026!Vault",
     val vaultCipherText: String = "",
     val vaultResult: VaultPayloadResult? = null,
     val vaultDecryptedPreview: String = "",
     val vaultStatusMessage: String = "",
     val vaultErrorMessage: String? = null,
     val pendingBinaryVault: BinaryVaultResult? = null,
-    val obfuscatorInput: String = "sk_live_dexshield_sample_secret_key",
+    val obfuscatorInput: String = "sk_live_bloody_team_sample_key",
     val obfuscatorMethodName: String = "getApiToken",
     val obfuscationResult: ObfuscatedStringResult? = null,
     val statusToast: String? = null
@@ -83,17 +96,24 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
     val faultLog: StateFlow<List<GuardedFault>> = ZeroCrashGuard.faultLog
     val isGuardActive: StateFlow<Boolean> = ZeroCrashGuard.isGuardActive
     val mainThreadLatencyMs: StateFlow<Long> = ZeroCrashGuard.mainThreadLatencyMs
+    val soundEnabled: StateFlow<Boolean> = SoundFxManager.soundEnabled
 
     private val _uiState = MutableStateFlow(ShieldUiState())
     val uiState: StateFlow<ShieldUiState> = _uiState.asStateFlow()
 
     init {
-        runSelfAudit()
-        obfuscateString()
-        encryptVaultText()
+        runSelfAudit(playSound = false)
+        obfuscateString(playSound = false)
+        encryptVaultText(playSound = false)
+        runDexRamPackingDemo(playSound = false)
     }
 
-    fun runSelfAudit() {
+    fun toggleSoundFx() {
+        SoundFxManager.toggleSound()
+    }
+
+    fun runSelfAudit(playSound: Boolean = true) {
+        if (playSound) SoundFxManager.playClick()
         viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
             _uiState.update { it.copy(isAuditing = true) }
             ZeroCrashGuard.probeMainThreadLatency()
@@ -107,10 +127,12 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                     apkReport = apk
                 )
             }
+            if (playSound) SoundFxManager.playSuccessChime()
         }
     }
 
     fun inspectPickedArchive(uri: Uri) {
+        SoundFxManager.playClick()
         viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
             _uiState.update { it.copy(isAuditing = true) }
             val ctx = getApplication<Application>().applicationContext
@@ -130,10 +152,12 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                     statusToast = "Loaded $displayName (${report.dexReports.size} DEX)"
                 )
             }
+            SoundFxManager.playSuccessChime()
         }
     }
 
     fun selectInputArchive(uri: Uri) {
+        SoundFxManager.playClick()
         viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
             val ctx = getApplication<Application>().applicationContext
             val displayName = resolveDisplayName(uri) ?: "input_app.apk"
@@ -152,34 +176,37 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                     statusToast = "Selected $displayName"
                 )
             }
+            SoundFxManager.playSuccessChime()
         }
     }
 
     fun loadSelfApkAsInput() {
+        SoundFxManager.playClick()
         viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
             val ctx = getApplication<Application>().applicationContext
             _uiState.update { it.copy(isAuditing = true, protectorError = null) }
             val selfFile = File(ctx.applicationInfo.sourceDir)
             val cachedCopy = withContext(Dispatchers.IO) {
-                val target = File(ctx.cacheDir, "DexShield_base.apk")
+                val target = File(ctx.cacheDir, "BloodyTeam_base.apk")
                 selfFile.copyTo(target, overwrite = true)
                 target
             }
             val uri = Uri.fromFile(cachedCopy)
             val report = withContext(Dispatchers.IO) {
-                DexApkInspector.inspectUri(ctx, uri, "DexShield_base.apk")
+                DexApkInspector.inspectUri(ctx, uri, "BloodyTeam_base.apk")
             }
             _uiState.update {
                 it.copy(
                     isAuditing = false,
                     selectedInputUri = uri,
-                    selectedInputName = "DexShield_base.apk",
+                    selectedInputName = "BloodyTeam_base.apk",
                     selectedInputInspection = report,
                     protectedOutput = null,
                     protectionSteps = emptyList(),
                     statusToast = "Loaded current APK as input"
                 )
             }
+            SoundFxManager.playSuccessChime()
         }
     }
 
@@ -194,6 +221,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun selectAllSecurityLayers(enabled: Boolean) {
+        SoundFxManager.playToggle(enabled)
         updateProfile {
             it.copy(
                 dexBytecodeGuard = enabled,
@@ -205,12 +233,14 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                 rootMagiskDetection = enabled,
                 emulatorCloneShield = enabled,
                 sslPinningProxyBlock = enabled,
-                screenTapjackingShield = enabled
+                screenTapjackingShield = enabled,
+                nativeJniStubPacking = enabled
             )
         }
     }
 
     fun runProtectionPipeline() {
+        SoundFxManager.playClick()
         val state = _uiState.value
         val inputUri = state.selectedInputUri
         if (inputUri == null) {
@@ -233,7 +263,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                     isProtecting = true,
                     protectorError = null,
                     protectedOutput = null,
-                    protectionSteps = listOf("Initializing DexShield Protection Engine...")
+                    protectionSteps = listOf("Initializing Bloody Team Forge Engine...")
                 )
             }
             try {
@@ -257,9 +287,10 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                     it.copy(
                         isProtecting = false,
                         protectedOutput = result,
-                        statusToast = "Protected output ready: ${result.suggestedOutputName}"
+                        statusToast = "Forged ${result.suggestedOutputName}"
                     )
                 }
+                SoundFxManager.playSuccessChime()
             } catch (t: Throwable) {
                 ZeroCrashGuard.recordFault("AppProtectorPipeline", Thread.currentThread().name, t)
                 _uiState.update {
@@ -272,7 +303,39 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun runDexRamPackingDemo(playSound: Boolean = true) {
+        if (playSound) SoundFxManager.playClick()
+        viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
+            val res = withContext(Dispatchers.Default) {
+                val sampleDex = ByteArray(2048)
+                "dex\n038\u0000".toByteArray(Charsets.US_ASCII).copyInto(sampleDex, 0)
+                val buf = ByteBuffer.wrap(sampleDex).order(ByteOrder.LITTLE_ENDIAN)
+                buf.putInt(32, sampleDex.size)
+                buf.putInt(56, 420)
+                buf.putInt(88, 1850)
+                for (i in 112 until sampleDex.size) {
+                    sampleDex[i] = ((i * 19 + 7) and 0xFF).toByte()
+                }
+                val pass = _uiState.value.protectorPassphrase.ifBlank { "BloodyTeam#2026!Key" }
+                val ext = profile.value.dexDisguiseExtension
+                val packed = DexPackerEngine.packDexEntry("classes.dex", sampleDex, pass, ext, 0)
+                val unpacked = DexPackerEngine.unpackDexEntry(packed.packedBytes, pass, 0)
+                DexRamTestResult(
+                    originalSize = packed.originalSizeBytes,
+                    packedSize = packed.packedSizeBytes,
+                    disguisedName = packed.disguisedAssetName,
+                    entropyBits = packed.entropyBitsPerByte,
+                    roundTripVerified = unpacked.contentEquals(sampleDex),
+                    sha256Short = packed.originalSha256Short
+                )
+            }
+            _uiState.update { it.copy(dexRamTest = res) }
+            if (playSound) SoundFxManager.playSuccessChime()
+        }
+    }
+
     fun saveProtectedArtifactToUri(destUri: Uri) {
+        SoundFxManager.playClick()
         val artifact = _uiState.value.protectedOutput ?: return
         viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
             try {
@@ -288,6 +351,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                 _uiState.update {
                     it.copy(statusToast = "Saved ${artifact.suggestedOutputName}")
                 }
+                SoundFxManager.playSuccessChime()
             } catch (t: Throwable) {
                 _uiState.update {
                     it.copy(protectorError = "Save failed: ${t.message}")
@@ -310,7 +374,8 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.update { it.copy(vaultCipherText = cipherBase64, vaultErrorMessage = null) }
     }
 
-    fun encryptVaultText() {
+    fun encryptVaultText(playSound: Boolean = true) {
+        if (playSound) SoundFxManager.playClick()
         val state = _uiState.value
         if (state.plainVaultInput.isEmpty() || state.vaultPassphrase.isEmpty()) {
             _uiState.update { it.copy(vaultErrorMessage = "Enter payload text and passphrase") }
@@ -330,6 +395,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                         vaultStatusMessage = "Encrypted ${res.originalBytes}B -> ${res.encryptedBytes}B (AES-256-GCM)"
                     )
                 }
+                if (playSound) SoundFxManager.playSuccessChime()
             } catch (t: Throwable) {
                 _uiState.update { it.copy(vaultErrorMessage = t.message ?: "Encryption failed") }
             }
@@ -337,6 +403,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun decryptVaultText() {
+        SoundFxManager.playClick()
         val state = _uiState.value
         if (state.vaultCipherText.isBlank() || state.vaultPassphrase.isEmpty()) {
             _uiState.update { it.copy(vaultErrorMessage = "Paste Base64 DXS1 ciphertext and passphrase") }
@@ -354,6 +421,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                         vaultStatusMessage = "Authenticated & decrypted ${plain.toByteArray().size}B cleanly"
                     )
                 }
+                SoundFxManager.playSuccessChime()
             } catch (t: Throwable) {
                 _uiState.update {
                     it.copy(
@@ -366,6 +434,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun processBinaryFile(uri: Uri, mode: VaultBinaryMode) {
+        SoundFxManager.playClick()
         val passphrase = _uiState.value.vaultPassphrase
         if (passphrase.isEmpty()) {
             _uiState.update { it.copy(vaultErrorMessage = "Enter a passphrase before file vault operation") }
@@ -410,6 +479,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                         vaultStatusMessage = result.summary
                     )
                 }
+                SoundFxManager.playSuccessChime()
             } catch (t: Throwable) {
                 _uiState.update {
                     it.copy(vaultErrorMessage = "File vault error: ${t.message ?: "Invalid DXS1 or key"}")
@@ -419,6 +489,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun saveBinaryVaultOutput(uri: Uri) {
+        SoundFxManager.playClick()
         val pending = _uiState.value.pendingBinaryVault ?: return
         viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
             try {
@@ -435,6 +506,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                         vaultStatusMessage = "Saved ${pending.outputBytes.size}B to ${pending.suggestedOutputName}"
                     )
                 }
+                SoundFxManager.playSuccessChime()
             } catch (t: Throwable) {
                 _uiState.update { it.copy(vaultErrorMessage = "Save failed: ${t.message}") }
             }
@@ -445,24 +517,29 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.update { it.copy(obfuscatorInput = secret, obfuscatorMethodName = methodName) }
     }
 
-    fun obfuscateString() {
+    fun obfuscateString(playSound: Boolean = true) {
+        if (playSound) SoundFxManager.playClick()
         val state = _uiState.value
         if (state.obfuscatorInput.isEmpty()) return
         val result = StringObfuscatorEngine.obfuscate(state.obfuscatorInput, state.obfuscatorMethodName)
         _uiState.update { it.copy(obfuscationResult = result) }
+        if (playSound) SoundFxManager.playSuccessChime()
     }
 
     fun triggerCrashGuardSimulation() {
+        SoundFxManager.playClick()
         viewModelScope.launch(Dispatchers.IO + ZeroCrashGuard.coroutineExceptionHandler) {
             ZeroCrashGuard.simulateGuardedWorkerFault()
             ZeroCrashGuard.probeMainThreadLatency()
             _uiState.update {
                 it.copy(statusToast = "Fault intercepted safely — zero crash, zero ANR")
             }
+            SoundFxManager.playSuccessChime()
         }
     }
 
     fun clearFaultLogs() {
+        SoundFxManager.playClick()
         ZeroCrashGuard.clearLogs()
     }
 
@@ -473,6 +550,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun adoptCurrentDeviceCert() {
+        SoundFxManager.playClick()
         val cert = _uiState.value.runtimeReport?.signingCertSha256 ?: return
         if (cert != "UNAVAILABLE") {
             updateProfile { it.copy(expectedSignatureSha256 = cert) }
@@ -488,6 +566,10 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
             appendLine(SketchwareKitGenerator.generateAssetVaultHelperJava(p))
             appendLine()
             appendLine(SketchwareKitGenerator.generateSslPinningJava(p))
+            appendLine()
+            appendLine(DexPackerEngine.generateStubApplicationJava(p))
+            appendLine()
+            appendLine(DexPackerEngine.generateNativeJniCpp(p))
             appendLine()
             appendLine(SketchwareKitGenerator.generateProguardRules(p))
         }
