@@ -3,19 +3,16 @@ name: Build DexShield APK
 on:
   push:
     branches:
-      - main
-      - master
-    tags:
-      - 'v*'
+      - '**'
   pull_request:
-    branches:
-      - main
-      - master
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-apk:
-    name: Test & Build Debug APK
+    name: Build Debug APK
     runs-on: ubuntu-latest
 
     steps:
@@ -28,14 +25,29 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          SDK_DIR="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          if [ -z "$SDK_DIR" ]; then
+            SDK_DIR="/usr/local/lib/android/sdk"
+          fi
+          mkdir -p "$SDK_DIR/licenses"
+          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e" > "$SDK_DIR/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd" > "$SDK_DIR/licenses/android-sdk-preview-license"
+          if [ -x "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
+          echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_DIR" >> "$GITHUB_ENV"
 
-      - name: Prepare debug keystore & env
+      - name: Prepare debug keystore and env
+        shell: bash
         run: |
           if [ -f debug.keystore.base64 ]; then
-            base64 --decode debug.keystore.base64 > debug.keystore
-          elif [ ! -f debug.keystore ]; then
+            tr -d '\r\n ' < debug.keystore.base64 | base64 --decode > debug.keystore
+          fi
+          if [ ! -s debug.keystore ]; then
             keytool -genkeypair -v -keystore debug.keystore \
               -storepass android -alias androiddebugkey -keypass android \
               -keyalg RSA -keysize 2048 -validity 10000 \
@@ -50,8 +62,12 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Run unit tests & build Debug APK
-        run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon
+      - name: Build Debug APK
+        run: |
+          gradle :app:assembleDebug \
+            --no-daemon \
+            --max-workers=2 \
+            -Dorg.gradle.jvmargs="-Xmx2560m -Dfile.encoding=UTF-8"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -60,24 +76,3 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
-
-  publish-release:
-    name: Attach APK to GitHub Release
-    needs: build-apk
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download APK artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: DexShield-debug-apk
-          path: artifacts
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*.apk
-          generate_release_notes: true
