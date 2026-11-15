@@ -618,4 +618,64 @@ class SecurityEnginesUnitTest {
             }
         }
     }
+
+    @Test
+    fun selfIntegrityVaultDecodesProtectedLinksAndDetectsTamper() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        assertTrue(com.example.security.SelfIntegrityVault.areAllLinksValid())
+        assertEquals(
+            "https://t.me/+mFa1dPdnc_84ZmU9",
+            com.example.security.SelfIntegrityVault.getTelegramJoinUrl()
+        )
+        assertEquals(
+            "https://t.me/BLOODYTEAMOFFICIAL",
+            com.example.security.SelfIntegrityVault.getTelegramChannelUrl()
+        )
+        assertEquals(
+            "https://youtube.com/@howtomakeinjector?si=x_oDekn8iZqGbJRM",
+            com.example.security.SelfIntegrityVault.getYoutubeUrl()
+        )
+        assertEquals(
+            "com.aistudio.dexshield.kx7vqp",
+            com.example.security.SelfIntegrityVault.getExpectedPackageId()
+        )
+
+        val status = com.example.security.SelfIntegrityVault.verifyAppIntegrity(
+            context = context,
+            isRobolectricTestOverride = true
+        )
+        assertTrue(status.isIntegrityValid)
+        assertTrue(status.linksVerified)
+        assertTrue(status.packageVerified)
+        assertTrue(status.cloneFree)
+
+        // Mutating an encoded slot must fail SHA-256 verification
+        val bogusArray = intArrayOf(1, 2, 3, 4)
+        assertFalse(
+            com.example.security.SelfIntegrityVault.verifySlot(
+                bogusArray,
+                0x4B,
+                "076a574d418212a427d09cdde7ed8a8fe2855653c61d36e9f2c7bf1c10cc52df"
+            )
+        )
+    }
+
+    @Test
+    fun voiceSpeakerManagerHandlesAllLanguagesSafely() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        com.example.audio.VoiceSpeakerManager.init(context, skipEngineInit = true)
+        com.example.audio.VoiceSpeakerManager.setVoiceEnabled(true)
+        assertTrue(com.example.audio.VoiceSpeakerManager.voiceEnabled.value)
+
+        for (lang in com.example.i18n.AppLanguage.entries) {
+            val locales = com.example.audio.VoiceSpeakerManager.candidateLocalesFor(lang)
+            assertTrue("Locales missing for $lang", locales.isNotEmpty())
+            val greeting = com.example.audio.VoiceSpeakerManager.languageSelectedAnnouncement(lang)
+            assertTrue("Greeting missing for $lang", greeting.isNotBlank())
+            // Ensure speaking in headless test never throws
+            com.example.audio.VoiceSpeakerManager.speakLanguageGreeting(lang)
+        }
+        assertFalse(com.example.audio.VoiceSpeakerManager.toggleVoice())
+        assertTrue(com.example.audio.VoiceSpeakerManager.toggleVoice())
+    }
 }

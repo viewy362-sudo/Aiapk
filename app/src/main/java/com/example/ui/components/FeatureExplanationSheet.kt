@@ -21,8 +21,10 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -50,10 +52,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.audio.SoundFxManager
+import com.example.audio.VoiceSpeakerManager
 import com.example.i18n.AppLanguage
 import com.example.i18n.AppStrings
 import com.example.i18n.FeatureGuideCatalog
 import com.example.security.ProtectionProfile
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
 fun TopLanguagePickerButton(
@@ -189,6 +193,7 @@ fun FeatureExplanationSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val haptic = LocalHapticFeedback.current
     val currentlyEnabled = spec.isChecked?.invoke(profile)
+    val isSpeaking by VoiceSpeakerManager.isSpeaking.collectAsStateWithLifecycle()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -248,6 +253,52 @@ fun FeatureExplanationSheet(
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onSurface
             )
+
+            // Voice Narration Action Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        SoundFxManager.playClick()
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        VoiceSpeakerManager.speakFeatureExplanation(explanation, lang, forceSpeak = true)
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .testTag("sheet_speak_voice_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.RecordVoiceOver,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(strings.speakBtn, maxLines = 1)
+                }
+
+                if (isSpeaking) {
+                    OutlinedButton(
+                        onClick = {
+                            SoundFxManager.playClick()
+                            VoiceSpeakerManager.stop()
+                        },
+                        modifier = Modifier
+                            .height(44.dp)
+                            .testTag("sheet_stop_voice_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Stop,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(strings.stopVoiceBtn, maxLines = 1)
+                    }
+                }
+            }
 
             // 1. What It Does
             ExplanationBlockCard(

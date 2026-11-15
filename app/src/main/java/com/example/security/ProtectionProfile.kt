@@ -110,7 +110,10 @@ data class ProtectionProfile(
     // APK Signing Output
     val signOutputApk: Boolean = false,
     val signerCommonName: String = "Bloody Team",
-    val signerOrg: String = "Bloody Team Security"
+    val signerOrg: String = "Bloody Team Security",
+    // Voice TTS & Mandatory Telegram Join Gate
+    val voiceGuideEnabled: Boolean = true,
+    val telegramGateVerified: Boolean = false
 ) {
     val enabledLayersCount: Int
         get() = listOf(

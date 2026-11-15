@@ -79,6 +79,10 @@ class ProtectionPreferences(private val context: Context) {
         val SIGN_OUTPUT_APK = booleanPreferencesKey("sign_output_apk")
         val SIGNER_CN = stringPreferencesKey("signer_cn")
         val SIGNER_ORG = stringPreferencesKey("signer_org")
+
+        // Voice Guide & Telegram Gate
+        val VOICE_GUIDE_ENABLED = booleanPreferencesKey("voice_guide_enabled")
+        val TELEGRAM_GATE_VERIFIED = booleanPreferencesKey("telegram_gate_verified")
     }
 
     val profileFlow: Flow<ProtectionProfile> = context.protectionDataStore.data.map { prefs ->
@@ -132,7 +136,9 @@ class ProtectionPreferences(private val context: Context) {
             loginValidateV2 = prefs[Keys.LOGIN_VALIDATE_V2] ?: false,
             signOutputApk = prefs[Keys.SIGN_OUTPUT_APK] ?: false,
             signerCommonName = prefs[Keys.SIGNER_CN] ?: "Bloody Team",
-            signerOrg = prefs[Keys.SIGNER_ORG] ?: "Bloody Team Security"
+            signerOrg = prefs[Keys.SIGNER_ORG] ?: "Bloody Team Security",
+            voiceGuideEnabled = prefs[Keys.VOICE_GUIDE_ENABLED] ?: true,
+            telegramGateVerified = prefs[Keys.TELEGRAM_GATE_VERIFIED] ?: false
         )
     }
 
@@ -188,6 +194,8 @@ class ProtectionPreferences(private val context: Context) {
             prefs[Keys.SIGN_OUTPUT_APK] = profile.signOutputApk
             prefs[Keys.SIGNER_CN] = profile.signerCommonName
             prefs[Keys.SIGNER_ORG] = profile.signerOrg
+            prefs[Keys.VOICE_GUIDE_ENABLED] = profile.voiceGuideEnabled
+            prefs[Keys.TELEGRAM_GATE_VERIFIED] = profile.telegramGateVerified
         }
     }
 }

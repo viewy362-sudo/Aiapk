@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
@@ -35,7 +38,9 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.VoiceOverOff
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -74,10 +79,18 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import com.example.audio.SoundFxManager
 import com.example.i18n.AppStrings
 import com.example.i18n.UiStrings
 import com.example.ui.components.FeatureExplanationSheet
+import com.example.ui.components.TamperLockdownDialog
+import com.example.ui.components.TelegramJoinGateDialog
 import com.example.ui.components.ThemeStudioSheet
 import com.example.ui.components.TopLanguagePickerButton
 import com.example.ui.screens.AssetVaultScreen
@@ -120,11 +133,13 @@ fun DexShieldApp(
     var showThemeStudio by rememberSaveable { mutableStateOf(false) }
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val profileLoaded by viewModel.profileLoaded.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val faultLog by viewModel.faultLog.collectAsStateWithLifecycle()
     val isGuardActive by viewModel.isGuardActive.collectAsStateWithLifecycle()
     val mainThreadLatencyMs by viewModel.mainThreadLatencyMs.collectAsStateWithLifecycle()
     val soundEnabled by viewModel.soundEnabled.collectAsStateWithLifecycle()
+    val voiceEnabled by viewModel.voiceEnabled.collectAsStateWithLifecycle()
 
     val activeThemePreset = profile.resolvedThemePreset
     val activeLanguage = profile.resolvedLanguage
@@ -195,6 +210,20 @@ fun DexShieldApp(
             )
         }
 
+        val integritySnapshot = uiState.selfIntegrity
+        if (integritySnapshot != null && !integritySnapshot.isIntegrityValid) {
+            TamperLockdownDialog(
+                currentLanguage = activeLanguage,
+                integrityStatus = integritySnapshot
+            )
+        } else if (profileLoaded && !profile.telegramGateVerified) {
+            TelegramJoinGateDialog(
+                currentLanguage = activeLanguage,
+                onSelectLanguage = viewModel::selectLanguage,
+                onVerifiedJoined = viewModel::markTelegramGateVerified
+            )
+        }
+
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val useNavigationRail = maxWidth >= 600.dp
 
@@ -204,26 +233,67 @@ fun DexShieldApp(
                 topBar = {
                     TopAppBar(
                         title = {
-                            Text(
-                                text = strings.appTitle,
-                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                            ) {
+                                androidx.compose.material3.Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFF160509),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                                    modifier = Modifier.size(30.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Image(
+                                            painter = painterResource(id = R.drawable.ic_bloody_logo),
+                                            contentDescription = "Bloody Team Logo",
+                                            contentScale = ContentScale.Fit,
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                .clip(CircleShape)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = strings.appTitle,
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1
+                                )
+                            }
                         },
                         actions = {
                             TopLanguagePickerButton(
                                 currentLanguage = activeLanguage,
                                 onSelectLanguage = viewModel::selectLanguage
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Spacer(modifier = Modifier.width(2.dp))
+                            IconButton(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.toggleVoiceGuide()
+                                },
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .testTag("topbar_voice_toggle_button")
+                            ) {
+                                Icon(
+                                    imageVector = if (voiceEnabled) {
+                                        Icons.Rounded.RecordVoiceOver
+                                    } else {
+                                        Icons.Rounded.VoiceOverOff
+                                    },
+                                    contentDescription = if (voiceEnabled) strings.voiceGuideOn else strings.voiceGuideOff,
+                                    tint = if (voiceEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                             IconButton(
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     viewModel.setShowFeatureGuide(!uiState.showFeatureGuide)
                                 },
                                 modifier = Modifier
-                                    .size(44.dp)
+                                    .size(40.dp)
                                     .testTag("topbar_feature_guide_button")
                             ) {
                                 Icon(
@@ -243,7 +313,7 @@ fun DexShieldApp(
                                     showThemeStudio = true
                                 },
                                 modifier = Modifier
-                                    .size(44.dp)
+                                    .size(40.dp)
                                     .testTag("theme_studio_button")
                             ) {
                                 Icon(
@@ -258,7 +328,7 @@ fun DexShieldApp(
                                     viewModel.toggleSoundFx()
                                 },
                                 modifier = Modifier
-                                    .size(44.dp)
+                                    .size(40.dp)
                                     .testTag("sound_fx_toggle_button")
                             ) {
                                 Icon(

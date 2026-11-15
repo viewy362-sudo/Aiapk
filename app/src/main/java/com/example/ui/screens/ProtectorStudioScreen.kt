@@ -72,20 +72,19 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.CircleShape
 import com.example.R
 import com.example.audio.SoundFxManager
 import com.example.i18n.AppStrings
 import com.example.i18n.FeatureIds
 import com.example.security.ProtectionProfile
+import com.example.security.SelfIntegrityVault
 import com.example.security.WallProtectionTier
 import com.example.security.WarningSeverity
 import com.example.ui.ShieldUiState
 import com.example.ui.components.ExplainInfoIconButton
 import com.example.ui.components.StatusPill
 import com.example.ui.theme.JetBrainsMonoFamily
-
-private const val YOUTUBE_CHANNEL_URL = "https://youtube.com/@howtomakeinjector?si=x_oDekn8iZqGbJRM"
-private const val TELEGRAM_CHANNEL_URL = "https://t.me/BLOODYTEAMOFFICIAL"
 
 @Composable
 fun ProtectorStudioScreen(
@@ -197,11 +196,35 @@ fun ProtectorStudioScreen(
                                 )
                             }
 
-                            Text(
-                                text = strings.heroTitle,
-                                style = MaterialTheme.typography.headlineMedium,
-                                color = Color.White
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFF160509),
+                                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
+                                    modifier = Modifier.size(52.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Image(
+                                            painter = painterResource(id = R.drawable.ic_bloody_logo),
+                                            contentDescription = "Bloody Team Official Logo",
+                                            contentScale = ContentScale.Fit,
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .clip(CircleShape)
+                                        )
+                                    }
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = strings.heroTitle,
+                                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = Color.White
+                                    )
+                                }
+                            }
                             Text(
                                 text = strings.heroSubtitle,
                                 style = MaterialTheme.typography.bodyMedium,
@@ -1023,11 +1046,10 @@ fun ProtectorStudioScreen(
                                 onClick = {
                                     SoundFxManager.playClick()
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    runCatching {
-                                        context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, Uri.parse(YOUTUBE_CHANNEL_URL))
-                                        )
-                                    }
+                                    SelfIntegrityVault.openExternalLinkSafely(
+                                        context,
+                                        SelfIntegrityVault.getYoutubeUrl()
+                                    )
                                 },
                                 modifier = Modifier
                                     .weight(1f)
@@ -1042,11 +1064,10 @@ fun ProtectorStudioScreen(
                                 onClick = {
                                     SoundFxManager.playClick()
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    runCatching {
-                                        context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, Uri.parse(TELEGRAM_CHANNEL_URL))
-                                        )
-                                    }
+                                    SelfIntegrityVault.openExternalLinkSafely(
+                                        context,
+                                        SelfIntegrityVault.getTelegramChannelUrl()
+                                    )
                                 },
                                 modifier = Modifier
                                     .weight(1f)

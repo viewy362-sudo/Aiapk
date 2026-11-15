@@ -1,6 +1,7 @@
 package com.example
 
 import android.app.Application
+import com.example.audio.VoiceSpeakerManager
 import com.example.security.ZeroCrashGuard
 
 class DexShieldApplication : Application() {
@@ -8,5 +9,6 @@ class DexShieldApplication : Application() {
         super.onCreate()
         ZeroCrashGuard.install()
         ZeroCrashGuard.probeMainThreadLatency()
+        VoiceSpeakerManager.init(this)
     }
 }

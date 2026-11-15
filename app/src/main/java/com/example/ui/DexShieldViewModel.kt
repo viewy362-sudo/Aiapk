@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.SoundFxManager
+import com.example.audio.VoiceSpeakerManager
 import com.example.data.ProtectionPreferences
 import com.example.i18n.AppLanguage
 import com.example.i18n.FeatureGuideCatalog
@@ -22,6 +23,8 @@ import com.example.security.ProtectedBuildArtifact
 import com.example.security.ProtectionProfile
 import com.example.security.RuntimeIntegrityShield
 import com.example.security.RuntimeShieldReport
+import com.example.security.SelfIntegrityStatus
+import com.example.security.SelfIntegrityVault
 import com.example.security.SketchwareKitGenerator
 import com.example.security.StringObfuscatorEngine
 import com.example.security.VaultPayloadResult
@@ -92,12 +95,16 @@ data class ShieldUiState(
     val isExplainMode: Boolean = false,
     val inspectedFeatureId: String? = null,
     val showFeatureGuide: Boolean = false,
+    val selfIntegrity: SelfIntegrityStatus? = null,
     val statusToast: String? = null
 )
 
 class DexShieldViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefs = ProtectionPreferences(application.applicationContext)
+
+    private val _profileLoaded = MutableStateFlow(false)
+    val profileLoaded: StateFlow<Boolean> = _profileLoaded.asStateFlow()
 
     val profile: StateFlow<ProtectionProfile> = prefs.profileFlow.stateIn(
         scope = viewModelScope,
@@ -109,11 +116,18 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
     val isGuardActive: StateFlow<Boolean> = ZeroCrashGuard.isGuardActive
     val mainThreadLatencyMs: StateFlow<Long> = ZeroCrashGuard.mainThreadLatencyMs
     val soundEnabled: StateFlow<Boolean> = SoundFxManager.soundEnabled
+    val voiceEnabled: StateFlow<Boolean> = VoiceSpeakerManager.voiceEnabled
 
     private val _uiState = MutableStateFlow(ShieldUiState())
     val uiState: StateFlow<ShieldUiState> = _uiState.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            prefs.profileFlow.collect { loaded ->
+                _profileLoaded.value = true
+                VoiceSpeakerManager.setVoiceEnabled(loaded.voiceGuideEnabled)
+            }
+        }
         runSelfAudit(playSound = false)
         obfuscateString(playSound = false)
         encryptVaultText(playSound = false)
@@ -124,6 +138,24 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
         SoundFxManager.toggleSound()
     }
 
+    fun toggleVoiceGuide() {
+        val next = VoiceSpeakerManager.toggleVoice()
+        SoundFxManager.playToggle(next)
+        updateProfile { it.copy(voiceGuideEnabled = next) }
+        val lang = profile.value.resolvedLanguage
+        if (next) {
+            VoiceSpeakerManager.speakLanguageGreeting(lang)
+        }
+        val strings = com.example.i18n.AppStrings.get(lang)
+        _uiState.update {
+            it.copy(statusToast = if (next) strings.voiceGuideOn else strings.voiceGuideOff)
+        }
+    }
+
+    fun markTelegramGateVerified() {
+        updateProfile { it.copy(telegramGateVerified = true) }
+    }
+
     fun runSelfAudit(playSound: Boolean = true) {
         if (playSound) SoundFxManager.playClick()
         viewModelScope.launch(ZeroCrashGuard.coroutineExceptionHandler) {
@@ -131,11 +163,15 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
             ZeroCrashGuard.probeMainThreadLatency()
             val ctx = getApplication<Application>().applicationContext
             val runtime = withContext(Dispatchers.IO) { RuntimeIntegrityShield.runLiveAudit(ctx) }
+            val integrity = withContext(Dispatchers.IO) {
+                SelfIntegrityVault.verifyAppIntegrity(ctx, runtime)
+            }
             val apk = withContext(Dispatchers.IO) { DexApkInspector.inspectSelfApk(ctx) }
             _uiState.update {
                 it.copy(
                     isAuditing = false,
                     runtimeReport = runtime,
+                    selfIntegrity = integrity,
                     apkReport = apk
                 )
             }
@@ -449,6 +485,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
     fun selectLanguage(language: AppLanguage) {
         SoundFxManager.playToggle(true)
         updateProfile { it.copy(languageCode = language.code) }
+        VoiceSpeakerManager.speakLanguageGreeting(language)
         _uiState.update { it.copy(statusToast = "${language.nativeName} (${language.shortBadge})") }
     }
 
@@ -461,10 +498,15 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
     fun inspectFeature(featureId: String) {
         SoundFxManager.playClick()
         _uiState.update { it.copy(inspectedFeatureId = featureId) }
+        val lang = profile.value.resolvedLanguage
+        FeatureGuideCatalog.findById(featureId)?.let { spec ->
+            VoiceSpeakerManager.speakFeatureExplanation(spec.explain(lang), lang)
+        }
     }
 
     fun dismissFeatureExplanation() {
         SoundFxManager.playClick()
+        VoiceSpeakerManager.stop()
         _uiState.update { it.copy(inspectedFeatureId = null) }
     }
 
