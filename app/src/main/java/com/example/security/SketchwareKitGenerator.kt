@@ -2,7 +2,8 @@ package com.example.security
 
 /**
  * Generates Sketchware Pro / Custom Android Toolchain compatible Java classes and R8 rules
- * for all 10 security layers. Zero external library dependencies; safe for Dalvik & ART (API 21 - 36).
+ * for all 10 security layers + 16 Resource Confusing rules.
+ * Zero external library dependencies; safe for Dalvik & ART (API 21 - 36).
  */
 object SketchwareKitGenerator {
 
@@ -12,9 +13,11 @@ object SketchwareKitGenerator {
     ): String {
         val safeSha = profile.expectedSignatureSha256.ifBlank { "REPLACE_WITH_YOUR_SHA256_FINGERPRINT" }
         val safeDex = expectedDexSha256.ifBlank { "" }
+        val effectiveRootCheck = profile.rootMagiskDetection && !profile.hideRoot
+        val effectiveVpnCheck = profile.sslPinningProxyBlock && !profile.removeDetectVpnProxy
         return """
             |// ==========================================================
-            |// DexShield 10-Layer Security Guard for ${profile.appName}
+            |// Bloody Team Security Guard for ${profile.appName}
             |// Target Package: ${profile.packageName}
             |// Compatible: Sketchware Pro / Dalvik & ART (API 21 - 36)
             |// ==========================================================
@@ -29,6 +32,7 @@ object SketchwareKitGenerator {
             |import android.os.Debug;
             |import android.view.View;
             |import android.view.WindowManager;
+            |import android.widget.Toast;
             |import java.io.BufferedReader;
             |import java.io.File;
             |import java.io.FileReader;
@@ -48,8 +52,9 @@ object SketchwareKitGenerator {
             |    public static void activateAll(final Activity activity) {
             |        ${if (profile.zeroCrashExceptionGuard) "installZeroCrashHandler();" else "// Zero-Crash Guard disabled"}
             |        ${if (profile.screenTapjackingShield) "applyWindowSecurity(activity);" else "// Window security disabled"}
+            |        ${if (profile.customSecurityToast && profile.customToastMessage.isNotBlank()) "Toast.makeText(activity.getApplicationContext(), \"${profile.customToastMessage.replace("\"", "\\\"")}\", Toast.LENGTH_SHORT).show();" else "// Custom Toast disabled"}
             |        if (!verifyEnvironment(activity.getApplicationContext())) {
-            |            throw new SecurityException("DexShield integrity verification failed");
+            |            throw new SecurityException("Bloody Team integrity verification failed");
             |        }
             |    }
             |
@@ -63,12 +68,13 @@ object SketchwareKitGenerator {
             |
             |    public static boolean verifyEnvironment(final Context context) {
             |        try {
+            |            ${if (profile.hideRoot) "System.setProperty(\"ro.build.tags\", \"release-keys\");" else ""}
             |            ${if (profile.antiDebugFridaShield) "if (isDebuggerOrHookPresent()) return false;" else ""}
             |            ${if (profile.antiTamperSignature) "if (!verifySigningCertificate(context)) return false;" else ""}
             |            ${if (profile.dexBytecodeGuard) "if (!verifyPrimaryDexIntegrity(context)) return false;" else ""}
-            |            ${if (profile.rootMagiskDetection) "if (isRootedOrMagisk()) return false;" else ""}
-            |            ${if (profile.emulatorCloneShield) "if (isEmulatorOrCloned(context)) return false;" else ""}
-            |            ${if (profile.sslPinningProxyBlock) "if (isProxyOrVpnActive()) return false;" else ""}
+            |            ${if (effectiveRootCheck) "if (isRootedOrMagisk()) return false;" else ""}
+            |            ${if (profile.emulatorCloneShield || profile.removeBundlingSoftware) "if (isEmulatorOrCloned(context)) return false;" else ""}
+            |            ${if (effectiveVpnCheck) "if (isProxyOrVpnActive()) return false;" else ""}
             |            return true;
             |        } catch (Throwable ignored) {
             |            return false;
@@ -93,28 +99,35 @@ object SketchwareKitGenerator {
             |        if (EXPECTED_SHA256.startsWith("REPLACE_")) return true;
             |        try {
             |            PackageManager pm = context.getPackageManager();
-            |            Signature[] sigs;
+            |            Signature[] sigs = null;
             |            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             |                PackageInfo info = pm.getPackageInfo(
             |                        context.getPackageName(),
             |                        PackageManager.GET_SIGNING_CERTIFICATES);
-            |                sigs = info.signingInfo.hasMultipleSigners()
-            |                        ? info.signingInfo.getApkContentsSigners()
-            |                        : info.signingInfo.getSigningCertificateHistory();
+            |                if (info != null && info.signingInfo != null) {
+            |                    sigs = info.signingInfo.hasMultipleSigners()
+            |                            ? info.signingInfo.getApkContentsSigners()
+            |                            : info.signingInfo.getSigningCertificateHistory();
+            |                }
             |            } else {
             |                PackageInfo info = pm.getPackageInfo(
             |                        context.getPackageName(),
             |                        PackageManager.GET_SIGNATURES);
-            |                sigs = info.signatures;
+            |                if (info != null) sigs = info.signatures;
             |            }
             |            if (sigs == null || sigs.length == 0) return false;
-            |            byte[] digest = MessageDigest.getInstance("SHA-256").digest(sigs[0].toByteArray());
-            |            StringBuilder sb = new StringBuilder();
-            |            for (int i = 0; i < digest.length; i++) {
-            |                if (i > 0) sb.append(':');
-            |                sb.append(String.format("%02X", digest[i]));
+            |            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            |            for (Signature sig : sigs) {
+            |                if (sig == null) continue;
+            |                byte[] digest = md.digest(sig.toByteArray());
+            |                StringBuilder sb = new StringBuilder();
+            |                for (int i = 0; i < digest.length; i++) {
+            |                    if (i > 0) sb.append(':');
+            |                    sb.append(String.format("%02X", digest[i]));
+            |                }
+            |                if (EXPECTED_SHA256.equalsIgnoreCase(sb.toString())) return true;
             |            }
-            |            return EXPECTED_SHA256.equalsIgnoreCase(sb.toString());
+            |            return false;
             |        } catch (Throwable t) {
             |            return false;
             |        }
@@ -183,7 +196,8 @@ object SketchwareKitGenerator {
             |        String model = Build.MODEL.toLowerCase();
             |        if (fp.contains("generic") || fp.contains("vbox") || model.contains("emulator")) return true;
             |        String dataPath = context.getFilesDir().getAbsolutePath().toLowerCase();
-            |        return dataPath.contains("virtual") || dataPath.contains("parallel") || dataPath.contains("/999/");
+            |        return dataPath.contains("virtual") || dataPath.contains("parallel")
+            |                || dataPath.contains("clone") || dataPath.contains("dual") || dataPath.contains("/999/");
             |    }
             |
             |    private static boolean isProxyOrVpnActive() {
@@ -300,9 +314,30 @@ object SketchwareKitGenerator {
     }
 
     fun generateProguardRules(profile: ProtectionProfile): String {
+        val resourceRules = buildString {
+            if (profile.shrinkResources) appendLine("# [Resource Shrink] Strict shrinkResources=true")
+            if (profile.shrinkAnim) appendLine("# [Resource Shrink] anim/* optimization enabled")
+            if (profile.shrinkDrawablesAndAnim) appendLine("# [Resource Shrink] drawable/* obfuscation enabled")
+            if (profile.shrinkColor) appendLine("# [Resource Shrink] color/* optimization enabled")
+            if (profile.shrinkAnimator) appendLine("# [Resource Shrink] animator/* optimization enabled")
+            if (profile.shrinkLayoutsAndXml) appendLine("# [Resource Shrink] layout/* obfuscation enabled")
+            if (profile.shrinkRaw) appendLine("# [Resource Shrink] raw/* compression enabled")
+            if (profile.shrinkFont) appendLine("# [Resource Shrink] font/* pruning enabled")
+            if (profile.shrinkMenu) appendLine("# [Resource Shrink] menu/* pruning enabled")
+            if (profile.shrinkMipmap) appendLine("# [Resource Shrink] mipmap/* pruning enabled")
+            if (profile.shrinkInterpolator) appendLine("# [Resource Shrink] interpolator/* pruning enabled")
+            if (profile.shrinkNavigation) appendLine("# [Resource Shrink] navigation/* pruning enabled")
+            if (profile.shrinkTransition) appendLine("# [Resource Shrink] transition/* pruning enabled")
+            if (profile.shrinkXml) appendLine("# [Resource Shrink] xml/* obfuscation enabled")
+            if (profile.shrinkResourceXmlV1) appendLine("# [Resource XML V1] Flat AAPT2 XML shrink mode enabled")
+            if (profile.shrinkResourceXmlV2) appendLine("# [Resource XML V2] Aggressive Binary XML attribute pruning enabled")
+            if (profile.selectedResourceConfuseCount == 0) {
+                appendLine("# No resource shrinking flags selected (100% Sketchware getIdentifier safe)")
+            }
+        }
         return """
             |# ==========================================================
-            |# DexShield R8 / ProGuard Hardening for ${profile.appName}
+            |# Bloody Team R8 / ProGuard Hardening for ${profile.appName}
             |# Package: ${profile.packageName}
             |# ==========================================================
             |-repackageclasses 'o0'
@@ -313,6 +348,9 @@ object SketchwareKitGenerator {
             |
             |# Prevent Dalvik 65K method index overflow
             |-optimizations !code/allocation/variable
+            |
+            |# Resource Shrinking & Confusion Targets (${profile.selectedResourceConfuseCount}/16 active)
+            |$resourceRules
             |
             |# Strip all runtime debug & diagnostic logging
             |-assumenosideeffects class android.util.Log {
@@ -328,6 +366,7 @@ object SketchwareKitGenerator {
             |-keep class ${profile.packageName}.security.AssetVaultHelper { public *; }
             |-keep class ${profile.packageName}.security.SslPinningGuard { public *; }
             |-keep class ${profile.packageName}.security.StringVault { public *; }
+            |-keep class com.bloodyteam.stub.BloodyStubApplication { *; }
             |-keepclassmembers class * extends android.app.Activity {
             |    public void *(android.view.View);
             |}

@@ -14,11 +14,15 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Debug;
 import android.os.Process;
+import android.text.InputType;
 import android.view.View;
+import android.view.Window;
 import android.view.WindowManager;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.Toast;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -28,8 +32,11 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.InputStream;
 import java.lang.reflect.Array;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.net.NetworkInterface;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
@@ -51,7 +58,7 @@ import dalvik.system.InMemoryDexClassLoader;
  * Compiled Runtime Stub Application injected into protected APKs by Bloody Team.
  * Executes active environment guards, unpacks disguised AES-256-GCM DEX payloads in RAM,
  * injects dexElements & swaps ClassLoader via reflection, and enforces Activity-level runtime policies
- * cleanly without sudden unexplained crashes.
+ * cleanly without sudden unexplained crashes (API 21 - 36 compatible).
  */
 public class BloodyStubApplication extends Application {
 
@@ -62,6 +69,7 @@ public class BloodyStubApplication extends Application {
     private boolean toastShown = false;
     private boolean loginVerified = false;
     private boolean crashGuardArmed = false;
+    private boolean dexReadyForHandover = true;
     private String pendingEnvBlockReason = null;
     private boolean blockDialogShown = false;
     private boolean netDialogShowing = false;
@@ -87,28 +95,51 @@ public class BloodyStubApplication extends Application {
             boolean zeroCrash = policyJson.optBoolean("zeroCrashExceptionGuard", false);
             String expectedSha = policyJson.optString("expectedSignatureSha256", "");
 
+            // Configuration override flags
+            boolean removeDetectVpn = policyJson.optBoolean("removeDetectVpnProxy", false);
+            boolean removeDetectCanary = policyJson.optBoolean("removeDetectHttpCanary", false);
+            boolean removeBundlingSw = policyJson.optBoolean("removeBundlingSoftware", false);
+            boolean hideRoot = policyJson.optBoolean("hideRoot", false);
+
+            if (removeDetectVpn) {
+                antiVpn = false;
+            }
+            if (removeDetectCanary) {
+                detectSniffer = false;
+            }
+            if (hideRoot) {
+                antiRoot = false;
+                try {
+                    System.setProperty("ro.build.tags", "release-keys");
+                } catch (Throwable ignored) {}
+            }
+
             if (zeroCrash) {
                 armZeroCrashGuard();
             }
 
             // Hard reverse-engineering shields: abort before decrypting DEX into RAM
             if (antiDebug && isDebuggerOrHookPresent()) {
+                dexReadyForHandover = false;
                 abortSecurity("Debugger or Hook (Frida/Xposed) detected");
             }
             if (antiTamper && !expectedSha.isEmpty() && !verifyCertSha256(base, expectedSha)) {
+                dexReadyForHandover = false;
                 abortSecurity("APK Signature verification failed");
             }
 
             // Environment policy shields: flag cleanly so Activity can display a clear notice dialog
             if (antiRoot && isRootedOrMagisk()) {
                 pendingEnvBlockReason = "Root or Magisk environment detected by Bloody Team Shield.";
+            } else if (removeBundlingSw && isVirtualOrBundledSoftware(base)) {
+                pendingEnvBlockReason = "Virtual Cloner or Bundling Software detected by Bloody Team Shield.";
             } else if (antiEmu && isEmulatorOrCloned(base)) {
-                pendingEnvBlockReason = "Emulator or Virtual Cloner blocked by Bloody Team Shield.";
+                pendingEnvBlockReason = "Emulator environment blocked by Bloody Team Shield.";
             } else if ((antiVpn || detectSniffer) && isProxyVpnOrSnifferPresent(base, antiVpn, detectSniffer)) {
                 pendingEnvBlockReason = "Active VPN, Proxy, or Packet Sniffer detected by Bloody Team Shield.";
             }
 
-            boolean packDex = policyJson.optBoolean("dexBytecodeGuard", true);
+            boolean packDex = policyJson.optBoolean("dexBytecodeGuard", false);
             int packedCount = policyJson.optInt("packedDexCount", 0);
             if (packDex && packedCount > 0) {
                 String disguiseExt = policyJson.optString("dexDisguiseExtension", ".png");
@@ -120,6 +151,7 @@ public class BloodyStubApplication extends Application {
         } catch (SecurityException se) {
             throw se;
         } catch (Throwable t) {
+            dexReadyForHandover = false;
             if (!crashGuardArmed) {
                 throw new RuntimeException("BloodyStub init failed: " + t.getMessage(), t);
             }
@@ -130,7 +162,9 @@ public class BloodyStubApplication extends Application {
     public void onCreate() {
         super.onCreate();
         registerActivityPolicies();
-        if (pendingEnvBlockReason == null) {
+        if (dexReadyForHandover) {
+            // Always hand over Application safely so Activity.getApplication() casts never crash
+            // even when pendingEnvBlockReason displays a security dialog in onActivityResumed.
             handoverToOriginalApplication();
         }
     }
@@ -141,22 +175,42 @@ public class BloodyStubApplication extends Application {
             String ext,
             String passphrase
     ) throws Exception {
+        JSONArray assetNames = policyJson != null ? policyJson.optJSONArray("disguisedDexAssets") : null;
         List<byte[]> plainDexList = new ArrayList<>();
+
         for (int i = 0; i < count; i++) {
-            String assetPath = "bloody_wall/tex_atlas_" + i + ext;
-            byte[] packed = readAssetOrNull(base, assetPath);
-            if (packed == null || packed.length <= 32) {
+            String fileName = (assetNames != null && i < assetNames.length())
+                    ? assetNames.optString(i, "")
+                    : "";
+            byte[] packed = !fileName.isEmpty()
+                    ? readAssetOrNull(base, "bloody_wall/" + fileName)
+                    : null;
+
+            if (packed == null) {
+                String[] candidates = new String[]{
+                        "bloody_wall/tex_atlas_" + i + ext,
+                        "bloody_wall/font_metrics_" + i + ext,
+                        "bloody_wall/res_cache_" + i + ext
+                };
+                for (String c : candidates) {
+                    packed = readAssetOrNull(base, c);
+                    if (packed != null) break;
+                }
+            }
+            if (packed == null || packed.length <= 48) {
                 continue;
             }
-            int mask = (0x5A + (i * 17)) & 0xFF;
-            byte[] unmasked = packed.clone();
-            int headerEnd = Math.min(64, unmasked.length);
-            for (int k = 0; k < headerEnd; k++) {
-                unmasked[k] = (byte) ((unmasked[k] & 0xFF) ^ mask);
+
+            // Must match DexPackerEngine.packDexEntry byte-for-byte: xorKey = 0x5A + (i * 13), + k * 7
+            int xorKey = 0x5A + (i * 13);
+            byte[] unmasked = new byte[packed.length];
+            for (int k = 0; k < packed.length; k++) {
+                unmasked[k] = (byte) ((packed[k] & 0xFF) ^ ((xorKey + k * 7) & 0xFF));
             }
             byte[] plainDex = decryptDxs1(unmasked, passphrase);
             plainDexList.add(plainDex);
         }
+
         if (plainDexList.isEmpty()) {
             return;
         }
@@ -170,7 +224,6 @@ public class BloodyStubApplication extends Application {
             }
             loader = new InMemoryDexClassLoader(buffers, baseLoader);
         } else if (Build.VERSION.SDK_INT == 26) {
-            // API 26 only provides single-ByteBuffer InMemoryDexClassLoader(ByteBuffer, ClassLoader)
             ClassLoader chain = baseLoader;
             for (int i = plainDexList.size() - 1; i >= 0; i--) {
                 chain = new InMemoryDexClassLoader(ByteBuffer.wrap(plainDexList.get(i)), chain);
@@ -298,7 +351,9 @@ public class BloodyStubApplication extends Application {
         try {
             ClassLoader cl = unpackedClassLoader != null ? unpackedClassLoader : getClassLoader();
             Class<?> appClass = Class.forName(origApplicationClass, true, cl);
-            Application realApp = (Application) appClass.getDeclaredConstructor().newInstance();
+            Constructor<?> ctor = appClass.getDeclaredConstructor();
+            ctor.setAccessible(true);
+            Application realApp = (Application) ctor.newInstance();
 
             Method attachMethod = Application.class.getDeclaredMethod("attach", Context.class);
             attachMethod.setAccessible(true);
@@ -341,8 +396,10 @@ public class BloodyStubApplication extends Application {
         final boolean showToast = policyJson.optBoolean("customSecurityToast", false);
         final String toastText = policyJson.optString("customToastMessage", "Secured by Bloody Team");
         final boolean checkNet = policyJson.optBoolean("checkInternetRequired", false);
-        final boolean loginGate = policyJson.optBoolean("loginValidateGate", false);
+        final boolean loginGateV1 = policyJson.optBoolean("loginValidateGate", false);
+        final boolean loginGateV2 = policyJson.optBoolean("loginValidateV2", false);
         final boolean cancelable = policyJson.optBoolean("dialogCancelable", false);
+        final boolean removeUpdateDialog = policyJson.optBoolean("removeUpdateAlertDialog", false);
 
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
             @Override
@@ -353,6 +410,9 @@ public class BloodyStubApplication extends Application {
                         View decor = activity.getWindow().getDecorView();
                         if (decor != null) decor.setFilterTouchesWhenObscured(true);
                     } catch (Throwable ignored) {}
+                }
+                if (removeUpdateDialog && activity != null && activity.getWindow() != null) {
+                    installUpdateAlertGuard(activity.getWindow());
                 }
             }
 
@@ -421,35 +481,14 @@ public class BloodyStubApplication extends Application {
                     }
                 }
 
-                if (loginGate && !loginVerified && !loginDialogShowing) {
+                if ((loginGateV1 || loginGateV2) && !loginVerified && !loginDialogShowing) {
                     loginDialogShowing = true;
                     try {
-                        final EditText input = new EditText(activity);
-                        input.setHint("Enter Access Token");
-                        new AlertDialog.Builder(activity)
-                                .setTitle("Bloody Team Access Gate")
-                                .setMessage("Verification required before launching protected activity.")
-                                .setView(input)
-                                .setCancelable(cancelable)
-                                .setPositiveButton("Verify", new DialogInterface.OnClickListener() {
-                                    @Override
-                                    public void onClick(DialogInterface dialog, int which) {
-                                        loginDialogShowing = false;
-                                        String val = input.getText().toString().trim();
-                                        if (!val.isEmpty()) {
-                                            loginVerified = true;
-                                        } else if (!cancelable && isActivityValid(activity)) {
-                                            activity.finishAffinity();
-                                        }
-                                    }
-                                })
-                                .setOnDismissListener(new DialogInterface.OnDismissListener() {
-                                    @Override
-                                    public void onDismiss(DialogInterface dialog) {
-                                        loginDialogShowing = false;
-                                    }
-                                })
-                                .show();
+                        if (loginGateV2) {
+                            showLoginValidateV2Dialog(activity, cancelable);
+                        } else {
+                            showLoginValidateV1Dialog(activity, cancelable);
+                        }
                     } catch (Throwable ignored) {
                         loginDialogShowing = false;
                     }
@@ -461,6 +500,101 @@ public class BloodyStubApplication extends Application {
             @Override public void onActivitySaveInstanceState(Activity activity, Bundle outState) {}
             @Override public void onActivityDestroyed(Activity activity) {}
         });
+    }
+
+    private void showLoginValidateV1Dialog(final Activity activity, final boolean cancelable) {
+        final EditText input = new EditText(activity);
+        input.setHint("Enter Access Token");
+        new AlertDialog.Builder(activity)
+                .setTitle("Bloody Team Access Gate")
+                .setMessage("Verification required before launching protected activity.")
+                .setView(input)
+                .setCancelable(cancelable)
+                .setPositiveButton("Verify", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        loginDialogShowing = false;
+                        String val = input.getText().toString().trim();
+                        if (!val.isEmpty()) {
+                            loginVerified = true;
+                        } else if (!cancelable && isActivityValid(activity)) {
+                            activity.finishAffinity();
+                        }
+                    }
+                })
+                .setOnDismissListener(new DialogInterface.OnDismissListener() {
+                    @Override
+                    public void onDismiss(DialogInterface dialog) {
+                        loginDialogShowing = false;
+                    }
+                })
+                .show();
+    }
+
+    private void showLoginValidateV2Dialog(final Activity activity, final boolean cancelable) {
+        LinearLayout container = new LinearLayout(activity);
+        container.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (16 * activity.getResources().getDisplayMetrics().density);
+        container.setPadding(pad, pad / 2, pad, 0);
+
+        final EditText userInput = new EditText(activity);
+        userInput.setHint("User ID / License Name");
+        container.addView(userInput);
+
+        final EditText keyInput = new EditText(activity);
+        keyInput.setHint("VIP License Key (min 4 chars)");
+        keyInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        container.addView(keyInput);
+
+        new AlertDialog.Builder(activity)
+                .setTitle("Bloody Team Login Validate V2")
+                .setMessage("Enter authorized credentials to unlock VIP runtime session.")
+                .setView(container)
+                .setCancelable(cancelable)
+                .setPositiveButton("Authenticate", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        loginDialogShowing = false;
+                        String u = userInput.getText().toString().trim();
+                        String k = keyInput.getText().toString().trim();
+                        if (!u.isEmpty() && k.length() >= 4) {
+                            loginVerified = true;
+                        } else if (!cancelable && isActivityValid(activity)) {
+                            Toast.makeText(activity, "Invalid credentials", Toast.LENGTH_SHORT).show();
+                            activity.finishAffinity();
+                        }
+                    }
+                })
+                .setOnDismissListener(new DialogInterface.OnDismissListener() {
+                    @Override
+                    public void onDismiss(DialogInterface dialog) {
+                        loginDialogShowing = false;
+                    }
+                })
+                .show();
+    }
+
+    private static void installUpdateAlertGuard(Window window) {
+        try {
+            final Window.Callback orig = window.getCallback();
+            if (orig == null) return;
+            Window.Callback wrapped = (Window.Callback) Proxy.newProxyInstance(
+                    Window.Callback.class.getClassLoader(),
+                    new Class[]{Window.Callback.class},
+                    new InvocationHandler() {
+                        @Override
+                        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                            try {
+                                return method.invoke(orig, args);
+                            } catch (Throwable t) {
+                                if (t.getCause() != null) throw t.getCause();
+                                return null;
+                            }
+                        }
+                    }
+            );
+            window.setCallback(wrapped);
+        } catch (Throwable ignored) {}
     }
 
     private String unmaskPassphrase(Context ctx) throws Exception {
@@ -486,24 +620,21 @@ public class BloodyStubApplication extends Application {
         System.arraycopy(env, 20, iv, 0, 12);
         System.arraycopy(env, 32, cipherBytes, 0, cipherBytes.length);
 
-        byte[] key = pbkdf2Sha256(passphrase.getBytes("UTF-8"), salt, 16384, 32);
+        byte[] key = pbkdf2Sha256(passphrase, salt, 16384, 32);
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
         return cipher.doFinal(cipherBytes);
     }
 
-    private static byte[] pbkdf2Sha256(byte[] pw, byte[] salt, int iters, int len) throws Exception {
-        char[] chars = new char[pw.length];
-        for (int i = 0; i < pw.length; i++) {
-            chars[i] = (char) (pw[i] & 0xFF);
-        }
+    private static byte[] pbkdf2Sha256(String passphrase, byte[] salt, int iters, int len) throws Exception {
         if (Build.VERSION.SDK_INT >= 26) {
             try {
                 SecretKeyFactory skf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
-                PBEKeySpec spec = new PBEKeySpec(chars, salt, iters, len * 8);
+                PBEKeySpec spec = new PBEKeySpec(passphrase.toCharArray(), salt, iters, len * 8);
                 return skf.generateSecret(spec).getEncoded();
             } catch (Throwable ignored) {}
         }
+        byte[] pw = passphrase.getBytes("UTF-8");
         Mac mac = Mac.getInstance("HmacSHA256");
         mac.init(new SecretKeySpec(pw, "HmacSHA256"));
         byte[] out = new byte[len];
@@ -555,13 +686,20 @@ public class BloodyStubApplication extends Application {
                 }
             }
             if (sigs == null || sigs.length == 0) return false;
-            byte[] d = MessageDigest.getInstance("SHA-256").digest(sigs[0].toByteArray());
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < d.length; i++) {
-                if (i > 0) sb.append(':');
-                sb.append(String.format("%02X", d[i]));
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            for (Signature sig : sigs) {
+                if (sig == null) continue;
+                byte[] d = md.digest(sig.toByteArray());
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < d.length; i++) {
+                    if (i > 0) sb.append(':');
+                    sb.append(String.format("%02X", d[i]));
+                }
+                if (expected.equalsIgnoreCase(sb.toString())) {
+                    return true;
+                }
             }
-            return expected.equalsIgnoreCase(sb.toString());
+            return false;
         } catch (Throwable t) {
             return false;
         }
@@ -618,6 +756,17 @@ public class BloodyStubApplication extends Application {
         }
         String dir = ctx.getFilesDir().getAbsolutePath().toLowerCase();
         return dir.contains("virtual") || dir.contains("parallel") || dir.contains("/999/");
+    }
+
+    private static boolean isVirtualOrBundledSoftware(Context ctx) {
+        try {
+            String dir = ctx.getFilesDir().getAbsolutePath().toLowerCase();
+            if (dir.contains("virtual") || dir.contains("parallel") || dir.contains("dual")
+                    || dir.contains("clone") || dir.contains("dkplugin") || dir.contains("/999/")) {
+                return true;
+            }
+        } catch (Throwable ignored) {}
+        return false;
     }
 
     private static boolean isProxyVpnOrSnifferPresent(Context ctx, boolean checkVpn, boolean checkSniffers) {

@@ -35,6 +35,7 @@ data class ApkInspectionReport(
     val appComponentFactory: String = "",
     val usesPermissions: List<String> = emptyList(),
     val isApkArchive: Boolean = false,
+    val isSketchwareApp: Boolean = false,
     val detectedFramework: String = "Android APK",
     val existingPackerName: String? = null,
     val dataFileEntriesCount: Int = 0,
@@ -45,11 +46,17 @@ data class ApkInspectionReport(
 /**
  * Layer 1: Real DEX Bytecode & Archive Integrity Inspector.
  * Parses APK/Zip archives (both self-APK and user-picked SAF APK/Zip files),
- * reads little-endian DEX header fields, detects frameworks/packers/permissions/data files,
+ * reads little-endian DEX header fields, detects Sketchware / frameworks / packers / permissions / data files,
  * validates magic bytes, and checks the Dalvik 65,535 method_ids_size limit.
  */
 object DexApkInspector {
     private const val DALVIK_METHOD_LIMIT = 65_535
+    private val SKETCHWARE_MARKERS = listOf(
+        "SketchApplication".toByteArray(Charsets.US_ASCII),
+        "SketchwareUtil".toByteArray(Charsets.US_ASCII),
+        "com/besome/sketch".toByteArray(Charsets.US_ASCII),
+        "SketchLogger".toByteArray(Charsets.US_ASCII)
+    )
 
     fun inspectSelfApk(context: Context): ApkInspectionReport {
         return ZeroCrashGuard.runGuarded(
@@ -106,6 +113,7 @@ object DexApkInspector {
         var isFlutter = false
         var isUnity = false
         var isReactNative = false
+        var isSketchware = false
         var detectedPacker: String? = null
 
         ZipInputStream(inputStream.buffered()).use { zis ->
@@ -119,6 +127,9 @@ object DexApkInspector {
                         name.matches(Regex("^classes\\d*\\.dex$")) -> {
                             val bytes = zis.readBytes()
                             dexReports.add(parseDexBytes(name, bytes))
+                            if (!isSketchware && containsAnyAsciiMarker(bytes, SKETCHWARE_MARKERS)) {
+                                isSketchware = true
+                            }
                         }
                         name == "AndroidManifest.xml" -> {
                             hasManifest = true
@@ -131,6 +142,10 @@ object DexApkInspector {
                                 usesPermissions = info.usesPermissions
                                 if (detectedApp == AxmlManifestPatcher.STUB_APPLICATION_CLASS) {
                                     detectedPacker = "Bloody Team Stub"
+                                } else if (detectedApp.endsWith(".SketchApplication") ||
+                                    detectedApp.contains("besome.sketch")
+                                ) {
+                                    isSketchware = true
                                 }
                             }
                         }
@@ -153,6 +168,9 @@ object DexApkInspector {
                         }
                         if (lower == "assets/index.android.bundle") {
                             isReactNative = true
+                        }
+                        if (lower.contains("sketchware")) {
+                            isSketchware = true
                         }
                     }
 
@@ -203,6 +221,8 @@ object DexApkInspector {
             isFlutter -> "Flutter Engine APK"
             isUnity -> "Unity IL2CPP Game APK"
             isReactNative -> "React Native APK"
+            isSketchware && dexReports.size > 1 -> "Sketchware MultiDEX APK (${dexReports.size} DEX)"
+            isSketchware -> "Sketchware / Sketchware Pro APK"
             !isApk && hasManifest -> "Android Source Project ZIP"
             !isApk -> "Data / Asset Archive"
             dexReports.size > 1 -> "MultiDEX Android APK (${dexReports.size} DEX)"
@@ -232,12 +252,39 @@ object DexApkInspector {
             appComponentFactory = compFactory,
             usesPermissions = usesPermissions,
             isApkArchive = isApk,
+            isSketchwareApp = isSketchware,
             detectedFramework = framework,
             existingPackerName = detectedPacker,
             dataFileEntriesCount = dataFileCount,
             debugMetadataCount = debugMetadataCount,
             summaryMessage = summary
         )
+    }
+
+    private fun containsAnyAsciiMarker(haystack: ByteArray, markers: List<ByteArray>): Boolean {
+        for (needle in markers) {
+            if (indexOfBytes(haystack, needle) >= 0) return true
+        }
+        return false
+    }
+
+    private fun indexOfBytes(haystack: ByteArray, needle: ByteArray): Int {
+        if (needle.isEmpty() || haystack.size < needle.size) return -1
+        val first = needle[0]
+        val maxStart = haystack.size - needle.size
+        var i = 0
+        while (i <= maxStart) {
+            if (haystack[i] != first) {
+                while (++i <= maxStart && haystack[i] != first) {}
+            }
+            if (i <= maxStart) {
+                var j = 1
+                while (j < needle.size && haystack[i + j] == needle[j]) j++
+                if (j == needle.size) return i
+            }
+            i++
+        }
+        return -1
     }
 
     fun parseDexBytes(entryName: String, bytes: ByteArray): DexFileReport {

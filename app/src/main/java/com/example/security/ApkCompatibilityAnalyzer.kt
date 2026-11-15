@@ -23,8 +23,9 @@ data class AutoProfileResult(
 
 /**
  * Smart Compatibility & Auto-Selection Engine.
- * Inspects the loaded APK or Project ZIP to automatically checkmark crash-safe protections,
- * while letting users freely customize options and immediately warning if a toggle creates a crash risk.
+ * Inspects the loaded APK (including Sketchware / Sketchware Pro APKs) or Project ZIP
+ * to automatically checkmark crash-safe protections, while letting users freely customize options
+ * and warning immediately if a toggle combination risks crashing.
  */
 object ApkCompatibilityAnalyzer {
 
@@ -47,10 +48,21 @@ object ApkCompatibilityAnalyzer {
         val hasDex = report.dexReports.isNotEmpty()
         val dexSafe = report.dexReports.all { it.withinDalvik65kLimit }
 
+        // Start from a clean base keeping user identity/theme settings
+        val cleanBase = ProtectionProfile(
+            appName = current.appName,
+            packageName = pkg,
+            expectedSignatureSha256 = current.expectedSignatureSha256,
+            dexDisguiseExtension = current.dexDisguiseExtension,
+            themePresetName = current.themePresetName,
+            customToastMessage = current.customToastMessage,
+            signerCommonName = current.signerCommonName,
+            signerOrg = current.signerOrg
+        )
+
         val recommended = if (!isApk) {
-            reasons.add("Project/Data ZIP detected: set ZIP bundle mode with AES-256-GCM asset & kit encryption")
-            current.copy(
-                packageName = pkg,
+            reasons.add("Project/Data ZIP detected: enabled AES-256-GCM asset & kit encryption + ProGuard shrink rules")
+            cleanBase.copy(
                 signOutputApk = false,
                 wallProtectionTier = WallProtectionTier.WALL_V3_JNI_STUB.name,
                 dexBytecodeGuard = hasDex,
@@ -61,7 +73,6 @@ object ApkCompatibilityAnalyzer {
                 stringMetadataObfuscation = true,
                 zeroCrashExceptionGuard = true,
                 rootMagiskDetection = true,
-                emulatorCloneShield = false,
                 sslPinningProxyBlock = true,
                 screenTapjackingShield = true,
                 shrinkResources = true,
@@ -69,34 +80,20 @@ object ApkCompatibilityAnalyzer {
                 shrinkLayoutsAndXml = true,
                 stripDebugMetadata = true,
                 detectHttpCanary = true,
-                checkInternetRequired = false,
-                loginValidateGate = false
+                removeBundlingSoftware = true
             )
         } else if (alreadyPacked) {
             reasons.add("Already packed (${report.existingPackerName}): disabled double Stub DEX swap to prevent boot crash")
             reasons.add("Enabled Signature Lock, Zero-Crash Guard & v1/v2 APK Re-Signing")
-            current.copy(
-                packageName = pkg,
+            cleanBase.copy(
                 signOutputApk = true,
                 wallProtectionTier = WallProtectionTier.WALL_V1_STANDARD.name,
-                dexBytecodeGuard = false,
-                nativeJniStubPacking = false,
-                assetAes256Encryption = false,
                 antiTamperSignature = true,
                 antiDebugFridaShield = true,
                 stringMetadataObfuscation = true,
                 zeroCrashExceptionGuard = true,
-                rootMagiskDetection = false,
-                emulatorCloneShield = false,
-                sslPinningProxyBlock = false,
                 screenTapjackingShield = true,
-                shrinkResources = false,
-                shrinkDrawablesAndAnim = false,
-                shrinkLayoutsAndXml = false,
-                stripDebugMetadata = report.debugMetadataCount > 0,
-                detectHttpCanary = false,
-                checkInternetRequired = false,
-                loginValidateGate = false
+                stripDebugMetadata = report.debugMetadataCount > 0
             )
         } else if (isHeavyEngine) {
             reasons.add("${report.detectedFramework}: enabled crash-safe wrapper shields without overwriting native engine bootstrap")
@@ -106,39 +103,32 @@ object ApkCompatibilityAnalyzer {
             if (isVpnApp) {
                 reasons.add("VPN permission detected: disabled Check VPN to prevent self-blocking")
             }
-            current.copy(
-                packageName = pkg,
+            cleanBase.copy(
                 signOutputApk = true,
                 wallProtectionTier = WallProtectionTier.WALL_V2_VAULT.name,
-                dexBytecodeGuard = false,
-                nativeJniStubPacking = false,
                 assetAes256Encryption = hasAssetsOrData,
                 antiTamperSignature = true,
                 antiDebugFridaShield = true,
                 stringMetadataObfuscation = true,
                 zeroCrashExceptionGuard = true,
                 rootMagiskDetection = true,
-                emulatorCloneShield = false,
                 sslPinningProxyBlock = hasInternet && !isVpnApp,
                 screenTapjackingShield = true,
-                shrinkResources = false,
-                shrinkDrawablesAndAnim = false,
-                shrinkLayoutsAndXml = false,
                 stripDebugMetadata = true,
                 detectHttpCanary = hasInternet && !isVpnApp,
-                checkInternetRequired = false,
-                loginValidateGate = false
+                removeBundlingSoftware = true
             )
         } else {
-            // Standard Java/Kotlin/Compose/MultiDEX Android APK
             val enableStub = hasDex && dexSafe
-            if (enableStub) {
+            if (report.isSketchwareApp) {
+                reasons.add("Sketchware APK detected: configured minSdk 21+ safe Stub & kept resources.arsc IDs intact (prevents Resources.NotFoundException)")
+            } else if (enableStub) {
                 reasons.add("${report.detectedFramework}: auto-selected InMemoryDexClassLoader Stub DEX + AES-256-GCM packing")
             } else {
                 reasons.add("DEX missing or >65K limit: kept original DEX and enabled wrapper shields")
             }
             if (hasAssetsOrData) {
-                reasons.add("Detected ${report.assetEntriesCount} asset(s) & ${report.dataFileEntriesCount} data file(s): mirrored safely to encrypted Kit without breaking APK reads")
+                reasons.add("Detected ${report.assetEntriesCount} asset(s) & ${report.dataFileEntriesCount} data file(s): safe .enc vault in Kit without breaking APK reads")
             }
             if (isVpnApp) {
                 reasons.add("VPN service permission found: Check VPN auto-disabled to prevent self-lockout")
@@ -147,10 +137,9 @@ object ApkCompatibilityAnalyzer {
             } else {
                 reasons.add("Offline app (no INTERNET permission): kept Check Internet & VPN filters OFF")
             }
-            reasons.add("Emulator block left OFF by default so protected APK opens cleanly on both emulators & real phones")
+            reasons.add("Emulator block, Login Validate & Resource XML shrinking kept OFF by default for 100% crash-free launch")
 
-            current.copy(
-                packageName = pkg,
+            cleanBase.copy(
                 signOutputApk = true,
                 wallProtectionTier = if (enableStub) {
                     WallProtectionTier.WALL_V3_JNI_STUB.name
@@ -165,16 +154,11 @@ object ApkCompatibilityAnalyzer {
                 stringMetadataObfuscation = true,
                 zeroCrashExceptionGuard = true,
                 rootMagiskDetection = true,
-                emulatorCloneShield = false,
                 sslPinningProxyBlock = hasInternet && !isVpnApp,
                 screenTapjackingShield = true,
-                shrinkResources = false,
-                shrinkDrawablesAndAnim = false,
-                shrinkLayoutsAndXml = false,
                 stripDebugMetadata = true,
                 detectHttpCanary = hasInternet && !isVpnApp,
-                checkInternetRequired = false,
-                loginValidateGate = false
+                removeBundlingSoftware = true
             )
         }
 
@@ -226,9 +210,9 @@ object ApkCompatibilityAnalyzer {
             if (isApk && isVpnApp && profile.sslPinningProxyBlock) {
                 warnings += CompatibilityWarning(
                     title = "VPN App Self-Block Risk",
-                    detail = "Target APK uses BIND_VPN_SERVICE. Enabling 'Check VPN' will block the app itself when its VPN tunnel starts.",
+                    detail = "Target APK uses BIND_VPN_SERVICE. Enabling 'Detect VPN Proxy' will block the app itself when its VPN tunnel starts.",
                     severity = WarningSeverity.CRITICAL,
-                    actionLabel = "Turn Off Check VPN"
+                    actionLabel = "Turn Off VPN Block"
                 ) { p ->
                     p.copy(sslPinningProxyBlock = false)
                 }
@@ -259,6 +243,48 @@ object ApkCompatibilityAnalyzer {
                     detail = "Inside signed .apk, assets/ data files remain readable so the app won't crash; encrypted .enc copies + AssetVaultHelper.java are saved inside _bloody_kit.zip.",
                     severity = WarningSeverity.INFO
                 )
+            }
+
+            if (isApk && profile.selectedResourceConfuseCount > 0) {
+                warnings += CompatibilityWarning(
+                    title = if (report.isSketchwareApp) "Sketchware Resource Safety Active" else "Resource Shrinking Safety Mode",
+                    detail = "Selected ${profile.selectedResourceConfuseCount} Resource Confusing rule(s) are safely exported into _bloody_kit.zip. Live APK resources.arsc IDs remain intact so getIdentifier() never crashes.",
+                    severity = WarningSeverity.INFO
+                )
+            }
+        }
+
+        // Contradictory toggle checks
+        if (profile.rootMagiskDetection && profile.hideRoot) {
+            warnings += CompatibilityWarning(
+                title = "Check Root vs Hide Root Conflict",
+                detail = "Both 'Check Root' and 'Hide Root' are ON. At runtime Hide Root will suppress root blocking so rooted devices are allowed.",
+                severity = WarningSeverity.WARNING,
+                actionLabel = "Keep Hide Root"
+            ) { p ->
+                p.copy(rootMagiskDetection = false, hideRoot = true)
+            }
+        }
+
+        if (profile.sslPinningProxyBlock && profile.removeDetectVpnProxy) {
+            warnings += CompatibilityWarning(
+                title = "Detect VPN vs Remove Detect VPN Conflict",
+                detail = "Both 'Detect VPN Proxy' and 'Remove Detect Vpn Proxy' are ON. Remove flag disables VPN blocking.",
+                severity = WarningSeverity.WARNING,
+                actionLabel = "Keep Remove VPN"
+            ) { p ->
+                p.copy(sslPinningProxyBlock = false, removeDetectVpnProxy = true)
+            }
+        }
+
+        if (profile.detectHttpCanary && profile.removeDetectHttpCanary) {
+            warnings += CompatibilityWarning(
+                title = "HttpCanary Detect vs Remove Conflict",
+                detail = "Both 'Detect HttpCanary' and 'Remove Detect HttpCanary' are ON. Remove flag disables sniffer blocking.",
+                severity = WarningSeverity.WARNING,
+                actionLabel = "Keep Remove Canary"
+            ) { p ->
+                p.copy(detectHttpCanary = false, removeDetectHttpCanary = true)
             }
         }
 

@@ -116,7 +116,8 @@ object AxmlManifestPatcher {
 
     fun patchApplicationStub(
         axmlBytes: ByteArray,
-        stubClassName: String = STUB_APPLICATION_CLASS
+        stubClassName: String = STUB_APPLICATION_CLASS,
+        removeAppComponentFactory: Boolean = true
     ): PatchedManifestResult {
         val info = inspectBinaryManifest(axmlBytes)
         if (!info.isValidBinaryAxml) {
@@ -178,8 +179,10 @@ object AxmlManifestPatcher {
                     node.attributes.add(newAttr)
                 }
 
-                // Remove custom AppComponentFactory (e.g. CoreComponentFactory) since original classes.dex is packed
-                node.attributes.removeAll { resIds.getOrNull(it.nameIdx) == ATTR_APP_COMPONENT_FACTORY }
+                if (removeAppComponentFactory) {
+                    // Remove custom AppComponentFactory (e.g. CoreComponentFactory) since original classes.dex is packed
+                    node.attributes.removeAll { resIds.getOrNull(it.nameIdx) == ATTR_APP_COMPONENT_FACTORY }
+                }
 
                 node.attributes.sortWith(compareBy { a ->
                     val id = resIds.getOrNull(a.nameIdx) ?: Int.MAX_VALUE

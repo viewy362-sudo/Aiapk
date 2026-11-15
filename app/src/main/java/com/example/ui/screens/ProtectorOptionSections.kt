@@ -25,7 +25,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -134,7 +133,7 @@ fun WallProtectionTierCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "Wall Protection Engine",
+                text = "Wall Protection Engine (${if (activeTier != null) activeTier.title else "None Selected"})",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -181,17 +180,7 @@ fun WallProtectionTierCard(
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
-                                Surface(
-                                    shape = CircleShape,
-                                    color = if (tier.badge == "VIP") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
-                                ) {
-                                    Text(
-                                        text = tier.badge,
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = if (tier.badge == "VIP") MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer,
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                                    )
-                                }
+                                VipOrFreeBadge(badge = tier.badge)
                             }
                             Text(
                                 text = tier.summary,
@@ -214,8 +203,6 @@ fun ResourcesAndConfigAccordionCard(
 ) {
     val haptic = LocalHapticFeedback.current
     var showLayers by rememberSaveable { mutableStateOf(true) }
-    var showResources by rememberSaveable { mutableStateOf(false) }
-    var showConfig by rememberSaveable { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // 1. 10-Layer Security Suite
@@ -267,65 +254,29 @@ fun ResourcesAndConfigAccordionCard(
             }
         }
 
-        // 2. Resources Confusing & Shrinking
-        ExpandableSectionCard(
-            title = "Resources Confusing & Optimization",
-            expanded = showResources,
-            onToggleExpand = {
-                SoundFxManager.playClick()
-                showResources = !showResources
-            }
-        ) {
-            OptionRow("Shrink Resources (Kit / R8 Config)", "Generates AAPT2 & R8 shrinkResources config in Developer Kit", profile.shrinkResources, "res_shrink_all") { c ->
-                onUpdateProfile { it.copy(shrinkResources = c) }
-            }
-            OptionRow("Confuse Drawable, Anim & Color (Kit)", "Adds drawable/anim/color obfuscation rules to Developer Kit", profile.shrinkDrawablesAndAnim, "res_shrink_drawable") { c ->
-                onUpdateProfile { it.copy(shrinkDrawablesAndAnim = c) }
-            }
-            OptionRow("Confuse Layout, Font, Raw & XML (Kit)", "Adds layout/raw/font/xml R8 rules to Developer Kit", profile.shrinkLayoutsAndXml, "res_shrink_layout") { c ->
-                onUpdateProfile { it.copy(shrinkLayoutsAndXml = c) }
-            }
-            OptionRow("Strip Build & Debug Metadata (APK)", "Directly removes DebugProbesKt.bin & build metadata from output APK", profile.stripDebugMetadata, "res_strip_debug") { c ->
-                onUpdateProfile { it.copy(stripDebugMetadata = c) }
-            }
-        }
+        // 2. Resources Confusing (16 options + metadata strip)
+        ResourcesConfusingSection(profile = profile, onUpdateProfile = onUpdateProfile)
 
-        // 3. Configuration & Runtime Guards
-        ExpandableSectionCard(
-            title = "Configuration & Runtime Policy",
-            expanded = showConfig,
-            onToggleExpand = {
-                SoundFxManager.playClick()
-                showConfig = !showConfig
-            }
-        ) {
-            OptionRow("Detect HttpCanary & Traffic Sniffers", "Blocks packet capture & MITM diagnostic tools", profile.detectHttpCanary, "cfg_httpcanary") { c ->
-                onUpdateProfile { it.copy(detectHttpCanary = c) }
-            }
-            OptionRow("Custom Security Toast Banner", "Shows protection notice at launch", profile.customSecurityToast, "cfg_custom_toast") { c ->
-                onUpdateProfile { it.copy(customSecurityToast = c) }
-            }
-            if (profile.customSecurityToast) {
-                OutlinedTextField(
-                    value = profile.customToastMessage,
-                    onValueChange = { v -> onUpdateProfile { it.copy(customToastMessage = v) } },
-                    label = { Text("Custom Toast Text") },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                )
-            }
-            OptionRow("Non-Cancelable Security Dialog", "Locks alert modal until check resolves", !profile.dialogCancelable, "cfg_dialog_lock") { c ->
-                onUpdateProfile { it.copy(dialogCancelable = !c) }
-            }
-            OptionRow("Check Internet Before Verification", "Requires active network before remote license check", profile.checkInternetRequired, "cfg_check_net") { c ->
-                onUpdateProfile { it.copy(checkInternetRequired = c) }
-            }
-            OptionRow("Login Validation Gate (V1/V2)", "Injects token verification hook policy", profile.loginValidateGate, "cfg_login_gate") { c ->
-                onUpdateProfile { it.copy(loginValidateGate = c) }
-            }
-        }
+        // 3. Configuration (13 options)
+        ConfigurationSection(profile = profile, onUpdateProfile = onUpdateProfile)
+
+        // 4. Advanced Settings (Login Validate V1 & V2)
+        AdvancedSettingsSection(profile = profile, onUpdateProfile = onUpdateProfile)
+    }
+}
+
+@Composable
+fun VipOrFreeBadge(badge: String) {
+    Surface(
+        shape = CircleShape,
+        color = if (badge == "VIP") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
+    ) {
+        Text(
+            text = badge,
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+            color = if (badge == "VIP") MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+        )
     }
 }
 
@@ -365,7 +316,7 @@ private fun CompactCheckTile(
 }
 
 @Composable
-private fun ExpandableSectionCard(
+fun ExpandableSectionCard(
     title: String,
     expanded: Boolean,
     onToggleExpand: () -> Unit,
@@ -421,11 +372,12 @@ private fun ExpandableSectionCard(
 }
 
 @Composable
-private fun OptionRow(
+fun OptionRow(
     title: String,
     subtitle: String,
     checked: Boolean,
     testTag: String,
+    badge: String? = null,
     onCheckedChange: (Boolean) -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -441,11 +393,19 @@ private fun OptionRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (badge != null) {
+                    VipOrFreeBadge(badge = badge)
+                }
+            }
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,

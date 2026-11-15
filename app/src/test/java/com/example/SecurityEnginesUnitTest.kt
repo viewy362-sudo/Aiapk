@@ -90,11 +90,36 @@ class SecurityEnginesUnitTest {
     fun initialProtectionProfileStartsAllOff() {
         val fresh = ProtectionProfile()
         assertEquals(0, fresh.enabledLayersCount)
+        assertEquals(0, fresh.selectedResourceConfuseCount)
+        assertEquals("", fresh.wallProtectionTier)
+        assertEquals(null, fresh.resolvedWallTier)
         assertFalse(fresh.dexBytecodeGuard)
         assertFalse(fresh.assetAes256Encryption)
         assertFalse(fresh.nativeJniStubPacking)
         assertFalse(fresh.signOutputApk)
         assertFalse(fresh.shrinkResources)
+        assertFalse(fresh.shrinkAnim)
+        assertFalse(fresh.shrinkResourceXmlV1)
+        assertFalse(fresh.shrinkResourceXmlV2)
+        assertFalse(fresh.removeDetectVpnProxy)
+        assertFalse(fresh.removeDetectHttpCanary)
+        assertFalse(fresh.removeBundlingSoftware)
+        assertFalse(fresh.removeUpdateAlertDialog)
+        assertFalse(fresh.hideRoot)
+        assertFalse(fresh.loginValidateGate)
+        assertFalse(fresh.loginValidateV2)
+    }
+
+    @Test
+    fun allNineWallProtectionTiersAvailable() {
+        assertEquals(9, com.example.security.WallProtectionTier.entries.size)
+        val titles = com.example.security.WallProtectionTier.entries.map { it.title }
+        assertTrue(titles.contains("Protection V1"))
+        assertTrue(titles.contains("Protection 360加固"))
+        assertTrue(titles.contains("Protection 几维安全"))
+        assertTrue(titles.contains("Protection 爱加密"))
+        assertTrue(titles.contains("Protection 腾讯加固"))
+        assertTrue(titles.contains("Protection 梆梆加固"))
     }
 
     @Test
@@ -260,11 +285,14 @@ class SecurityEnginesUnitTest {
             assertEquals(ZipEntry.STORED, apkZip.getEntry("resources.arsc").method)
             assertEquals(ZipEntry.STORED, apkZip.getEntry("lib/arm64-v8a/libdemo.so").method)
             assertTrue(apkZip.getEntry("assets/bloody_wall/protection_policy.json") != null)
-            assertTrue(apkZip.getEntry("assets/bloody_wall/tex_atlas_0.png") != null)
+            assertTrue("Non-binary manifest safely preserves original classes.dex", apkZip.getEntry("classes.dex") != null)
 
             val encSecretBytes = apkZip.getInputStream(apkZip.getEntry("assets/bloody_wall/vault_config.enc")).readBytes()
             val decrypted = String(CryptoVaultEngine.decryptBytes(encSecretBytes, "SignMaster#2026"), Charsets.UTF_8)
             assertEquals("api_secret_token_abc", decrypted)
+        }
+        ZipFile(artifact.companionKitFile!!).use { kitZip ->
+            assertTrue(kitZip.getEntry("disguised_dex_assets/tex_atlas_0.png") != null)
         }
     }
 
@@ -281,7 +309,7 @@ class SecurityEnginesUnitTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val stubDexBytes = context.assets.open("bloody_stub.dex").use { it.readBytes() }
         val stubReport = DexApkInspector.parseDexBytes("classes.dex", stubDexBytes)
-        assertTrue("bloody_stub.dex must be valid Dalvik DEX", stubReport.dexVersion.startsWith("DEX "))
+        assertEquals("DEX 035", stubReport.dexVersion)
         assertTrue(stubReport.withinDalvik65kLimit)
 
         // Locate real compiled binary AndroidManifest.xml from existing debug APK if present
@@ -332,6 +360,36 @@ class SecurityEnginesUnitTest {
                 val unpackedDex = DexPackerEngine.unpackDexEntry(packedAsset, "RealApkPass#2026", 0)
                 val origDex = ZipFile(debugApk).use { it.getInputStream(it.getEntry("classes.dex")).readBytes() }
                 assertArrayEquals(origDex, unpackedDex)
+            }
+
+            // Also verify Wrapper-Stub mode (when DEX encryption is OFF but runtime guards are ON)
+            val wrapperProfile = ProtectionProfile(
+                appName = "Bloody Team",
+                packageName = parsedOrig.packageName,
+                signOutputApk = true,
+                dexBytecodeGuard = false,
+                nativeJniStubPacking = false,
+                screenTapjackingShield = true,
+                loginValidateV2 = true
+            )
+            val wrapperArtifact = AppProtectorPipeline.protectArchive(
+                context = context,
+                inputUri = Uri.fromFile(debugApk),
+                inputFileName = "app-debug.apk",
+                profile = wrapperProfile,
+                passphrase = "RealApkPass#2026",
+                secretToHide = "",
+                onStep = {}
+            )
+            assertTrue(wrapperArtifact.stubDexInjected)
+            assertTrue(wrapperArtifact.manifestPatched)
+            assertTrue(wrapperArtifact.signedVerification?.v2RsaVerified == true)
+            ZipFile(wrapperArtifact.primaryOutputFile).use { wrapApk ->
+                val origDex = ZipFile(debugApk).use { it.getInputStream(it.getEntry("classes.dex")).readBytes() }
+                assertArrayEquals(origDex, wrapApk.getInputStream(wrapApk.getEntry("classes.dex")).readBytes())
+                val dexEntries = wrapApk.entries().toList().count { it.name.matches(Regex("^classes\\d*\\.dex$")) }
+                assertTrue("Wrapper stub DEX must be appended as classesN.dex", dexEntries >= 2)
+                assertArrayEquals(stubDexBytes, wrapApk.getInputStream(wrapApk.getEntry("classes$dexEntries.dex")).readBytes())
             }
         }
     }
@@ -420,6 +478,47 @@ class SecurityEnginesUnitTest {
             flRes.recommendedProfile.copy(dexBytecodeGuard = true, nativeJniStubPacking = true)
         )
         assertTrue(flWarnings.any { it.severity == com.example.security.WarningSeverity.CRITICAL && it.fixTransform != null })
+
+        // 4. Sketchware APK auto-detection & conflicting config toggles warning
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val sketchApk = File(context.cacheDir, "sketchware_sample.apk")
+        val sketchDex = ByteArray(256).apply {
+            "dex\n035\u0000".toByteArray(Charsets.US_ASCII).copyInto(this, 0)
+            ByteBuffer.wrap(this).order(ByteOrder.LITTLE_ENDIAN).putInt(88, 1200)
+            val marker = "Lcom/besome/sketch/SketchApplication;".toByteArray(Charsets.US_ASCII)
+            marker.copyInto(this, 112)
+        }
+        ZipOutputStream(FileOutputStream(sketchApk)).use { zos ->
+            zos.putNextEntry(ZipEntry("AndroidManifest.xml"))
+            zos.write(byteArrayOf(1, 2, 3, 4))
+            zos.closeEntry()
+            zos.putNextEntry(ZipEntry("classes.dex"))
+            zos.write(sketchDex)
+            zos.closeEntry()
+        }
+        val sketchReport = DexApkInspector.inspectUri(context, Uri.fromFile(sketchApk), "sketchware_sample.apk")
+        assertTrue("Sketchware APK must be detected from DEX marker", sketchReport.isSketchwareApp)
+        assertTrue(sketchReport.detectedFramework.contains("Sketchware"))
+
+        val sketchAuto = com.example.security.ApkCompatibilityAnalyzer.recommendProfile(sketchReport, base)
+        assertEquals(com.example.security.WallProtectionTier.WALL_V3_JNI_STUB, sketchAuto.recommendedProfile.resolvedWallTier)
+        assertTrue(sketchAuto.recommendedProfile.removeBundlingSoftware)
+        assertFalse(sketchAuto.recommendedProfile.shrinkResources)
+
+        val conflictWarnings = com.example.security.ApkCompatibilityAnalyzer.analyzeWarnings(
+            sketchReport,
+            sketchAuto.recommendedProfile.copy(
+                rootMagiskDetection = true,
+                hideRoot = true,
+                sslPinningProxyBlock = true,
+                removeDetectVpnProxy = true,
+                detectHttpCanary = true,
+                removeDetectHttpCanary = true
+            )
+        )
+        assertTrue(conflictWarnings.any { it.title.contains("Hide Root Conflict") })
+        assertTrue(conflictWarnings.any { it.title.contains("Remove Detect VPN Conflict") })
+        assertTrue(conflictWarnings.any { it.title.contains("HttpCanary Detect vs Remove Conflict") })
     }
 
     @Test

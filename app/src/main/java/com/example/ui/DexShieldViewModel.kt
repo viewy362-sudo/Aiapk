@@ -297,8 +297,19 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         val activeProfile = profile.value
-        if (activeProfile.enabledLayersCount == 0) {
-            _uiState.update { it.copy(protectorError = "Enable at least 1 security protection layer") }
+        val hasAnyProtection = activeProfile.enabledLayersCount > 0 ||
+            activeProfile.signOutputApk ||
+            activeProfile.selectedResourceConfuseCount > 0 ||
+            activeProfile.stripDebugMetadata ||
+            activeProfile.loginValidateGate ||
+            activeProfile.loginValidateV2 ||
+            activeProfile.customSecurityToast ||
+            activeProfile.detectHttpCanary ||
+            activeProfile.checkInternetRequired ||
+            activeProfile.removeBundlingSoftware ||
+            activeProfile.removeUpdateAlertDialog
+        if (!hasAnyProtection) {
+            _uiState.update { it.copy(protectorError = "Enable at least 1 security protection layer or tier") }
             return
         }
 
@@ -464,7 +475,7 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                     antiDebugFridaShield = true,
                     stringMetadataObfuscation = true,
                     rootMagiskDetection = true,
-                    emulatorCloneShield = true,
+                    removeBundlingSoftware = true,
                     nativeJniStubPacking = true,
                     signOutputApk = true
                 )
@@ -482,10 +493,72 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
                     screenTapjackingShield = true,
                     nativeJniStubPacking = true,
                     shrinkResources = true,
+                    shrinkAnim = true,
                     shrinkDrawablesAndAnim = true,
                     shrinkLayoutsAndXml = true,
                     stripDebugMetadata = true,
                     detectHttpCanary = true,
+                    removeBundlingSoftware = true,
+                    signOutputApk = true
+                )
+                WallProtectionTier.WALL_360_JIAGU -> p.copy(
+                    wallProtectionTier = tier.name,
+                    dexBytecodeGuard = true,
+                    nativeJniStubPacking = true,
+                    assetAes256Encryption = true,
+                    antiTamperSignature = true,
+                    antiDebugFridaShield = true,
+                    zeroCrashExceptionGuard = true,
+                    removeBundlingSoftware = true,
+                    stripDebugMetadata = true,
+                    signOutputApk = true
+                )
+                WallProtectionTier.WALL_KIWI_SEC -> p.copy(
+                    wallProtectionTier = tier.name,
+                    dexBytecodeGuard = true,
+                    nativeJniStubPacking = true,
+                    stringMetadataObfuscation = true,
+                    antiTamperSignature = true,
+                    antiDebugFridaShield = true,
+                    zeroCrashExceptionGuard = true,
+                    shrinkResources = true,
+                    shrinkXml = true,
+                    signOutputApk = true
+                )
+                WallProtectionTier.WALL_IJIAMI -> p.copy(
+                    wallProtectionTier = tier.name,
+                    dexBytecodeGuard = true,
+                    nativeJniStubPacking = true,
+                    antiDebugFridaShield = true,
+                    antiTamperSignature = true,
+                    rootMagiskDetection = true,
+                    screenTapjackingShield = true,
+                    zeroCrashExceptionGuard = true,
+                    detectHttpCanary = true,
+                    signOutputApk = true
+                )
+                WallProtectionTier.WALL_TENCENT_LEGU -> p.copy(
+                    wallProtectionTier = tier.name,
+                    dexBytecodeGuard = true,
+                    nativeJniStubPacking = true,
+                    assetAes256Encryption = true,
+                    antiTamperSignature = true,
+                    antiDebugFridaShield = true,
+                    zeroCrashExceptionGuard = true,
+                    sslPinningProxyBlock = true,
+                    stripDebugMetadata = true,
+                    signOutputApk = true
+                )
+                WallProtectionTier.WALL_BANGCLE -> p.copy(
+                    wallProtectionTier = tier.name,
+                    dexBytecodeGuard = true,
+                    nativeJniStubPacking = true,
+                    assetAes256Encryption = true,
+                    antiTamperSignature = true,
+                    stringMetadataObfuscation = true,
+                    zeroCrashExceptionGuard = true,
+                    removeBundlingSoftware = true,
+                    screenTapjackingShield = true,
                     signOutputApk = true
                 )
             }
