@@ -1,5 +1,6 @@
 package com.example.security
 
+import com.example.i18n.AppLanguage
 import com.example.ui.theme.AppThemePreset
 
 enum class WallProtectionTier(
@@ -60,6 +61,7 @@ data class ProtectionProfile(
     val expectedSignatureSha256: String = "",
     val dexDisguiseExtension: String = ".png",
     val themePresetName: String = AppThemePreset.CRIMSON_FORGE.name,
+    val languageCode: String = AppLanguage.ENGLISH.code,
     val wallProtectionTier: String = "",
     // 10 Core Security Layers (all OFF initially until an APK/file is selected)
     val dexBytecodeGuard: Boolean = false,
@@ -149,4 +151,7 @@ data class ProtectionProfile(
 
     val resolvedWallTier: WallProtectionTier?
         get() = WallProtectionTier.entries.firstOrNull { it.name == wallProtectionTier }
+
+    val resolvedLanguage: AppLanguage
+        get() = AppLanguage.fromCode(languageCode)
 }

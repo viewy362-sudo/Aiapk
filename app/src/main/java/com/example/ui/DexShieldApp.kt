@@ -13,28 +13,29 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.EnhancedEncryption
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Shield
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.EnhancedEncryption
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Shield
-import androidx.compose.material.icons.rounded.VolumeOff
-import androidx.compose.material.icons.rounded.VolumeUp
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +51,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -73,9 +75,14 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.audio.SoundFxManager
+import com.example.i18n.AppStrings
+import com.example.i18n.UiStrings
+import com.example.ui.components.FeatureExplanationSheet
 import com.example.ui.components.ThemeStudioSheet
+import com.example.ui.components.TopLanguagePickerButton
 import com.example.ui.screens.AssetVaultScreen
 import com.example.ui.screens.DexPackerLabScreen
+import com.example.ui.screens.FeatureGuideScreen
 import com.example.ui.screens.ObfuscatorScreen
 import com.example.ui.screens.ProtectorStudioScreen
 import com.example.ui.screens.ShieldDashboardScreen
@@ -84,16 +91,23 @@ import com.example.ui.theme.DexShieldTheme
 import kotlinx.coroutines.launch
 
 enum class ShieldTab(
-    val label: String,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
     val testTag: String
 ) {
-    FORGE("Forge", Icons.Rounded.EnhancedEncryption, Icons.Outlined.EnhancedEncryption, "nav_tab_forge"),
-    PACKER("Packer", Icons.Rounded.Memory, Icons.Outlined.Memory, "nav_tab_packer"),
-    AUDIT("Audit", Icons.Rounded.Shield, Icons.Outlined.Shield, "nav_tab_audit"),
-    VAULT("Vault", Icons.Rounded.Lock, Icons.Outlined.Lock, "nav_tab_vault"),
-    KIT("Kit", Icons.Rounded.Build, Icons.Outlined.Build, "nav_tab_kit")
+    FORGE(Icons.Rounded.EnhancedEncryption, Icons.Outlined.EnhancedEncryption, "nav_tab_forge"),
+    PACKER(Icons.Rounded.Memory, Icons.Outlined.Memory, "nav_tab_packer"),
+    AUDIT(Icons.Rounded.Shield, Icons.Outlined.Shield, "nav_tab_audit"),
+    VAULT(Icons.Rounded.Lock, Icons.Outlined.Lock, "nav_tab_vault"),
+    KIT(Icons.Rounded.Build, Icons.Outlined.Build, "nav_tab_kit");
+
+    fun label(strings: UiStrings): String = when (this) {
+        FORGE -> strings.tabForge
+        PACKER -> strings.tabPacker
+        AUDIT -> strings.tabAudit
+        VAULT -> strings.tabVault
+        KIT -> strings.tabKit
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -113,6 +127,9 @@ fun DexShieldApp(
     val soundEnabled by viewModel.soundEnabled.collectAsStateWithLifecycle()
 
     val activeThemePreset = profile.resolvedThemePreset
+    val activeLanguage = profile.resolvedLanguage
+    val strings = AppStrings.get(activeLanguage)
+
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
@@ -128,7 +145,7 @@ fun DexShieldApp(
         val scope = rememberCoroutineScope()
         val haptic = LocalHapticFeedback.current
 
-        BackHandler(enabled = currentTab != ShieldTab.FORGE) {
+        BackHandler(enabled = !uiState.showFeatureGuide && currentTab != ShieldTab.FORGE) {
             SoundFxManager.playClick()
             currentTab = ShieldTab.FORGE
         }
@@ -146,6 +163,9 @@ fun DexShieldApp(
         }
 
         val selectTab: (ShieldTab) -> Unit = { target ->
+            if (uiState.showFeatureGuide) {
+                viewModel.setShowFeatureGuide(false)
+            }
             if (currentTab != target) {
                 SoundFxManager.playClick()
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -166,6 +186,15 @@ fun DexShieldApp(
             )
         }
 
+        uiState.inspectedFeatureId?.let { featureId ->
+            FeatureExplanationSheet(
+                featureId = featureId,
+                profile = profile,
+                onDismiss = viewModel::dismissFeatureExplanation,
+                onToggleFeature = viewModel::toggleFeatureById
+            )
+        }
+
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val useNavigationRail = maxWidth >= 600.dp
 
@@ -173,32 +202,40 @@ fun DexShieldApp(
                 contentWindowInsets = WindowInsets.safeDrawing,
                 snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
                 topBar = {
-                    CenterAlignedTopAppBar(
+                    TopAppBar(
                         title = {
                             Text(
-                                text = "BLOODY TEAM",
+                                text = strings.appTitle,
                                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1
                             )
                         },
-                        navigationIcon = {
+                        actions = {
+                            TopLanguagePickerButton(
+                                currentLanguage = activeLanguage,
+                                onSelectLanguage = viewModel::selectLanguage
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
                             IconButton(
                                 onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    viewModel.randomizeThemePreset()
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.setShowFeatureGuide(!uiState.showFeatureGuide)
                                 },
                                 modifier = Modifier
-                                    .size(48.dp)
-                                    .testTag("topbar_random_theme_button")
+                                    .size(44.dp)
+                                    .testTag("topbar_feature_guide_button")
                             ) {
                                 Icon(
-                                    imageVector = Icons.Rounded.AutoAwesome,
-                                    contentDescription = "Random UI design",
-                                    tint = MaterialTheme.colorScheme.secondary
+                                    imageVector = Icons.Rounded.MenuBook,
+                                    contentDescription = strings.guideButtonLabel,
+                                    tint = if (uiState.showFeatureGuide) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.secondary
+                                    }
                                 )
                             }
-                        },
-                        actions = {
                             IconButton(
                                 onClick = {
                                     SoundFxManager.playClick()
@@ -206,7 +243,7 @@ fun DexShieldApp(
                                     showThemeStudio = true
                                 },
                                 modifier = Modifier
-                                    .size(48.dp)
+                                    .size(44.dp)
                                     .testTag("theme_studio_button")
                             ) {
                                 Icon(
@@ -221,17 +258,21 @@ fun DexShieldApp(
                                     viewModel.toggleSoundFx()
                                 },
                                 modifier = Modifier
-                                    .size(48.dp)
+                                    .size(44.dp)
                                     .testTag("sound_fx_toggle_button")
                             ) {
                                 Icon(
-                                    imageVector = if (soundEnabled) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff,
+                                    imageVector = if (soundEnabled) {
+                                        Icons.AutoMirrored.Rounded.VolumeUp
+                                    } else {
+                                        Icons.AutoMirrored.Rounded.VolumeOff
+                                    },
                                     contentDescription = if (soundEnabled) "Mute click sounds" else "Enable click sounds",
                                     tint = if (soundEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         },
-                        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                        colors = TopAppBarDefaults.topAppBarColors(
                             containerColor = MaterialTheme.colorScheme.background,
                             titleContentColor = MaterialTheme.colorScheme.onBackground
                         )
@@ -243,17 +284,18 @@ fun DexShieldApp(
                             containerColor = MaterialTheme.colorScheme.surface
                         ) {
                             ShieldTab.entries.forEach { tab ->
-                                val selected = currentTab == tab
+                                val selected = !uiState.showFeatureGuide && currentTab == tab
+                                val tabLabel = tab.label(strings)
                                 NavigationBarItem(
                                     selected = selected,
                                     onClick = { selectTab(tab) },
                                     icon = {
                                         Icon(
                                             imageVector = if (selected) tab.selectedIcon else tab.unselectedIcon,
-                                            contentDescription = tab.label
+                                            contentDescription = tabLabel
                                         )
                                     },
-                                    label = { Text(tab.label, maxLines = 1) },
+                                    label = { Text(tabLabel, maxLines = 1) },
                                     modifier = Modifier.testTag(tab.testTag)
                                 )
                             }
@@ -271,17 +313,18 @@ fun DexShieldApp(
                             containerColor = MaterialTheme.colorScheme.surface
                         ) {
                             ShieldTab.entries.forEach { tab ->
-                                val selected = currentTab == tab
+                                val selected = !uiState.showFeatureGuide && currentTab == tab
+                                val tabLabel = tab.label(strings)
                                 NavigationRailItem(
                                     selected = selected,
                                     onClick = { selectTab(tab) },
                                     icon = {
                                         Icon(
                                             imageVector = if (selected) tab.selectedIcon else tab.unselectedIcon,
-                                            contentDescription = tab.label
+                                            contentDescription = tabLabel
                                         )
                                     },
-                                    label = { Text(tab.label) },
+                                    label = { Text(tabLabel) },
                                     modifier = Modifier.testTag(tab.testTag)
                                 )
                             }
@@ -289,105 +332,123 @@ fun DexShieldApp(
                     }
 
                     Box(modifier = Modifier.weight(1f).fillMaxSize()) {
-                        AnimatedContent(
-                            targetState = currentTab,
-                            transitionSpec = {
-                                val forward = targetState.ordinal >= initialState.ordinal
-                                val enterSlide = slideInHorizontally(animationSpec = tween(220)) { w -> if (forward) w / 5 else -w / 5 } + fadeIn(tween(220))
-                                val exitSlide = slideOutHorizontally(animationSpec = tween(180)) { w -> if (forward) -w / 6 else w / 6 } + fadeOut(tween(180))
-                                enterSlide togetherWith exitSlide
-                            },
-                            label = "tab_transition"
-                        ) { tab ->
-                            when (tab) {
-                                ShieldTab.FORGE -> ProtectorStudioScreen(
-                                    uiState = uiState,
-                                    profile = profile,
-                                    onPickInputArchive = viewModel::selectInputArchive,
-                                    onLoadSelfApk = viewModel::loadSelfApkAsInput,
-                                    onUpdateProfile = viewModel::updateProfile,
-                                    onApplyWallTier = viewModel::applyWallTier,
-                                    onReapplySmartAuto = viewModel::reapplySmartAutoProfile,
-                                    onApplyWarningFix = viewModel::applyWarningFix,
-                                    onOpenThemeStudio = {
-                                        SoundFxManager.playClick()
-                                        showThemeStudio = true
-                                    },
-                                    onRandomTheme = viewModel::randomizeThemePreset,
-                                    onSelectAllLayers = viewModel::selectAllSecurityLayers,
-                                    onAdoptDeviceCert = viewModel::adoptCurrentDeviceCert,
-                                    onUpdateProtectorInputs = viewModel::updateProtectorInputs,
-                                    onRunProtection = viewModel::runProtectionPipeline,
-                                    onSaveProtectedOutput = viewModel::saveProtectedArtifactToUri,
-                                    onSaveCompanionKit = viewModel::saveCompanionKitToUri
-                                )
-                                ShieldTab.PACKER -> DexPackerLabScreen(
-                                    uiState = uiState,
-                                    profile = profile,
-                                    onUpdateProfile = viewModel::updateProfile,
-                                    onRunRamPackTest = { viewModel.runDexRamPackingDemo(playSound = true) },
-                                    onCopiedNotice = showToast
-                                )
-                                ShieldTab.AUDIT -> ShieldDashboardScreen(
-                                    uiState = uiState,
-                                    profile = profile,
-                                    isGuardActive = isGuardActive,
-                                    mainThreadLatencyMs = mainThreadLatencyMs,
-                                    onRunAudit = { viewModel.runSelfAudit(playSound = true) },
-                                    onPickApkOrZip = viewModel::inspectPickedArchive,
-                                    onNavigateToKit = { selectTab(ShieldTab.KIT) }
-                                )
-                                ShieldTab.VAULT -> AssetVaultScreen(
-                                    uiState = uiState,
-                                    onUpdateInputs = viewModel::updateVaultInputs,
-                                    onUpdateCipherInput = viewModel::updateVaultCipherInput,
-                                    onEncryptText = { viewModel.encryptVaultText(playSound = true) },
-                                    onDecryptText = viewModel::decryptVaultText,
-                                    onProcessFile = viewModel::processBinaryFile,
-                                    onSaveProcessedFile = viewModel::saveBinaryVaultOutput,
-                                    onCopiedNotice = showToast
-                                )
-                                ShieldTab.KIT -> Column(modifier = Modifier.fillMaxSize()) {
-                                    SingleChoiceSegmentedButtonRow(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 16.dp, vertical = 6.dp)
-                                    ) {
-                                        listOf("Sketchware Kit", "String & Crash Lab").forEachIndexed { idx, title ->
-                                            SegmentedButton(
-                                                selected = kitSubTab == idx,
-                                                onClick = {
-                                                    SoundFxManager.playClick()
-                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    kitSubTab = idx
-                                                },
-                                                shape = SegmentedButtonDefaults.itemShape(index = idx, count = 2),
-                                                modifier = Modifier.testTag("kit_subtab_$idx")
-                                            ) {
-                                                Text(title, maxLines = 1)
+                        if (uiState.showFeatureGuide) {
+                            FeatureGuideScreen(
+                                profile = profile,
+                                onInspectFeature = viewModel::inspectFeature,
+                                onToggleFeature = viewModel::toggleFeatureById,
+                                onBack = { viewModel.setShowFeatureGuide(false) }
+                            )
+                        } else {
+                            AnimatedContent(
+                                targetState = currentTab,
+                                transitionSpec = {
+                                    val forward = targetState.ordinal >= initialState.ordinal
+                                    val enterSlide = slideInHorizontally(animationSpec = tween(220)) { w -> if (forward) w / 5 else -w / 5 } + fadeIn(tween(220))
+                                    val exitSlide = slideOutHorizontally(animationSpec = tween(180)) { w -> if (forward) -w / 6 else w / 6 } + fadeOut(tween(180))
+                                    enterSlide togetherWith exitSlide
+                                },
+                                label = "tab_transition"
+                            ) { tab ->
+                                when (tab) {
+                                    ShieldTab.FORGE -> ProtectorStudioScreen(
+                                        uiState = uiState,
+                                        profile = profile,
+                                        isExplainMode = uiState.isExplainMode,
+                                        onToggleExplainMode = viewModel::toggleExplainMode,
+                                        onOpenFeatureGuide = { viewModel.setShowFeatureGuide(true) },
+                                        onInspectFeature = viewModel::inspectFeature,
+                                        onPickInputArchive = viewModel::selectInputArchive,
+                                        onLoadSelfApk = viewModel::loadSelfApkAsInput,
+                                        onUpdateProfile = viewModel::updateProfile,
+                                        onApplyWallTier = viewModel::applyWallTier,
+                                        onReapplySmartAuto = viewModel::reapplySmartAutoProfile,
+                                        onApplyWarningFix = viewModel::applyWarningFix,
+                                        onOpenThemeStudio = {
+                                            SoundFxManager.playClick()
+                                            showThemeStudio = true
+                                        },
+                                        onRandomTheme = viewModel::randomizeThemePreset,
+                                        onSelectAllLayers = viewModel::selectAllSecurityLayers,
+                                        onAdoptDeviceCert = viewModel::adoptCurrentDeviceCert,
+                                        onUpdateProtectorInputs = viewModel::updateProtectorInputs,
+                                        onRunProtection = viewModel::runProtectionPipeline,
+                                        onSaveProtectedOutput = viewModel::saveProtectedArtifactToUri,
+                                        onSaveCompanionKit = viewModel::saveCompanionKitToUri
+                                    )
+                                    ShieldTab.PACKER -> DexPackerLabScreen(
+                                        uiState = uiState,
+                                        profile = profile,
+                                        onUpdateProfile = viewModel::updateProfile,
+                                        onRunRamPackTest = { viewModel.runDexRamPackingDemo(playSound = true) },
+                                        onCopiedNotice = showToast,
+                                        onInspectFeature = viewModel::inspectFeature
+                                    )
+                                    ShieldTab.AUDIT -> ShieldDashboardScreen(
+                                        uiState = uiState,
+                                        profile = profile,
+                                        isGuardActive = isGuardActive,
+                                        mainThreadLatencyMs = mainThreadLatencyMs,
+                                        onRunAudit = { viewModel.runSelfAudit(playSound = true) },
+                                        onPickApkOrZip = viewModel::inspectPickedArchive,
+                                        onNavigateToKit = { selectTab(ShieldTab.KIT) },
+                                        onInspectFeature = viewModel::inspectFeature
+                                    )
+                                    ShieldTab.VAULT -> AssetVaultScreen(
+                                        uiState = uiState,
+                                        onUpdateInputs = viewModel::updateVaultInputs,
+                                        onUpdateCipherInput = viewModel::updateVaultCipherInput,
+                                        onEncryptText = { viewModel.encryptVaultText(playSound = true) },
+                                        onDecryptText = viewModel::decryptVaultText,
+                                        onProcessFile = viewModel::processBinaryFile,
+                                        onSaveProcessedFile = viewModel::saveBinaryVaultOutput,
+                                        onCopiedNotice = showToast,
+                                        onInspectFeature = viewModel::inspectFeature
+                                    )
+                                    ShieldTab.KIT -> Column(modifier = Modifier.fillMaxSize()) {
+                                        SingleChoiceSegmentedButtonRow(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                        ) {
+                                            listOf("Sketchware Kit", "String & Crash Lab").forEachIndexed { idx, title ->
+                                                SegmentedButton(
+                                                    selected = kitSubTab == idx,
+                                                    onClick = {
+                                                        SoundFxManager.playClick()
+                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        kitSubTab = idx
+                                                    },
+                                                    shape = SegmentedButtonDefaults.itemShape(index = idx, count = 2),
+                                                    modifier = Modifier.testTag("kit_subtab_$idx")
+                                                ) {
+                                                    Text(title, maxLines = 1)
+                                                }
                                             }
                                         }
-                                    }
-                                    if (kitSubTab == 0) {
-                                        SketchwareKitScreen(
-                                            profile = profile,
-                                            onUpdateProfile = viewModel::updateProfile,
-                                            onAdoptDeviceCert = viewModel::adoptCurrentDeviceCert,
-                                            onBuildExportBundle = viewModel::buildCombinedExportBundle,
-                                            onCopiedNotice = showToast
-                                        )
-                                    } else {
-                                        ObfuscatorScreen(
-                                            uiState = uiState,
-                                            faultLog = faultLog,
-                                            isGuardActive = isGuardActive,
-                                            mainThreadLatencyMs = mainThreadLatencyMs,
-                                            onUpdateObfuscator = viewModel::updateObfuscatorInput,
-                                            onGenerateObfuscation = { viewModel.obfuscateString(playSound = true) },
-                                            onTriggerCrashTest = viewModel::triggerCrashGuardSimulation,
-                                            onClearFaults = viewModel::clearFaultLogs,
-                                            onCopiedNotice = showToast
-                                        )
+                                        if (kitSubTab == 0) {
+                                            SketchwareKitScreen(
+                                                profile = profile,
+                                                onUpdateProfile = viewModel::updateProfile,
+                                                onAdoptDeviceCert = viewModel::adoptCurrentDeviceCert,
+                                                onBuildExportBundle = viewModel::buildCombinedExportBundle,
+                                                onCopiedNotice = showToast,
+                                                onInspectFeature = viewModel::inspectFeature
+                                            )
+                                        } else {
+                                            ObfuscatorScreen(
+                                                uiState = uiState,
+                                                faultLog = faultLog,
+                                                isGuardActive = isGuardActive,
+                                                mainThreadLatencyMs = mainThreadLatencyMs,
+                                                onUpdateObfuscator = viewModel::updateObfuscatorInput,
+                                                onGenerateObfuscation = { viewModel.obfuscateString(playSound = true) },
+                                                onTriggerCrashTest = viewModel::triggerCrashGuardSimulation,
+                                                onClearFaults = viewModel::clearFaultLogs,
+                                                onCopiedNotice = showToast,
+                                                onInspectFeature = viewModel::inspectFeature
+                                            )
+                                        }
                                     }
                                 }
                             }

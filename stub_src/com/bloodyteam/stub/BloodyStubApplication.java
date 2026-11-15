@@ -118,30 +118,42 @@ public class BloodyStubApplication extends Application {
                 armZeroCrashGuard();
             }
 
+            boolean packDex = policyJson.optBoolean("dexBytecodeGuard", false);
+            int packedCount = policyJson.optInt("packedDexCount", 0);
+            boolean hasPackedDex = packDex && packedCount > 0;
+
             // Hard reverse-engineering shields: abort before decrypting DEX into RAM
             if (antiDebug && isDebuggerOrHookPresent()) {
-                dexReadyForHandover = false;
-                abortSecurity("Debugger or Hook (Frida/Xposed) detected");
+                if (hasPackedDex) {
+                    dexReadyForHandover = false;
+                    abortSecurity("Debugger or Hook (Frida/Xposed) detected");
+                } else {
+                    pendingEnvBlockReason = "Debugger or Hook (Frida/Xposed) detected by Bloody Team Shield.";
+                }
             }
             if (antiTamper && !expectedSha.isEmpty() && !verifyCertSha256(base, expectedSha)) {
-                dexReadyForHandover = false;
-                abortSecurity("APK Signature verification failed");
+                if (hasPackedDex) {
+                    dexReadyForHandover = false;
+                    abortSecurity("APK Signature verification failed");
+                } else {
+                    pendingEnvBlockReason = "APK Signature tamper detected by Bloody Team Shield.";
+                }
             }
 
             // Environment policy shields: flag cleanly so Activity can display a clear notice dialog
-            if (antiRoot && isRootedOrMagisk()) {
-                pendingEnvBlockReason = "Root or Magisk environment detected by Bloody Team Shield.";
-            } else if (removeBundlingSw && isVirtualOrBundledSoftware(base)) {
-                pendingEnvBlockReason = "Virtual Cloner or Bundling Software detected by Bloody Team Shield.";
-            } else if (antiEmu && isEmulatorOrCloned(base)) {
-                pendingEnvBlockReason = "Emulator environment blocked by Bloody Team Shield.";
-            } else if ((antiVpn || detectSniffer) && isProxyVpnOrSnifferPresent(base, antiVpn, detectSniffer)) {
-                pendingEnvBlockReason = "Active VPN, Proxy, or Packet Sniffer detected by Bloody Team Shield.";
+            if (pendingEnvBlockReason == null) {
+                if (antiRoot && isRootedOrMagisk()) {
+                    pendingEnvBlockReason = "Root or Magisk environment detected by Bloody Team Shield.";
+                } else if (removeBundlingSw && isVirtualOrBundledSoftware(base)) {
+                    pendingEnvBlockReason = "Virtual Cloner or Bundling Software detected by Bloody Team Shield.";
+                } else if (antiEmu && isEmulatorOrCloned(base)) {
+                    pendingEnvBlockReason = "Emulator environment blocked by Bloody Team Shield.";
+                } else if ((antiVpn || detectSniffer) && isProxyVpnOrSnifferPresent(base, antiVpn, detectSniffer)) {
+                    pendingEnvBlockReason = "Active VPN, Proxy, or Packet Sniffer detected by Bloody Team Shield.";
+                }
             }
 
-            boolean packDex = policyJson.optBoolean("dexBytecodeGuard", false);
-            int packedCount = policyJson.optInt("packedDexCount", 0);
-            if (packDex && packedCount > 0) {
+            if (hasPackedDex) {
                 String disguiseExt = policyJson.optString("dexDisguiseExtension", ".png");
                 String passphrase = unmaskPassphrase(base);
                 if (passphrase != null && !passphrase.isEmpty()) {
@@ -263,10 +275,15 @@ public class BloodyStubApplication extends Application {
         }
 
         enableHiddenApiExemption();
-        unpackedClassLoader = loader;
-        swapLoadedApkClassLoader(base, loader);
-        injectDexElementsIntoBaseLoader(baseLoader, loader);
-        Thread.currentThread().setContextClassLoader(loader);
+        boolean mergedIntoBase = injectDexElementsIntoBaseLoader(baseLoader, loader);
+        if (mergedIntoBase) {
+            unpackedClassLoader = baseLoader;
+            Thread.currentThread().setContextClassLoader(baseLoader);
+        } else {
+            unpackedClassLoader = loader;
+            swapLoadedApkClassLoader(base, loader);
+            Thread.currentThread().setContextClassLoader(loader);
+        }
     }
 
     /**
@@ -304,12 +321,12 @@ public class BloodyStubApplication extends Application {
      * Merges decrypted dexElements into the base PathClassLoader as a safety fallback
      * so components resolved against the initial ClassLoader never throw ClassNotFoundException.
      */
-    private void injectDexElementsIntoBaseLoader(ClassLoader baseLoader, ClassLoader decryptedLoader) {
+    private boolean injectDexElementsIntoBaseLoader(ClassLoader baseLoader, ClassLoader decryptedLoader) {
         try {
             Object basePathList = getFieldRecursive(baseLoader, "pathList");
-            if (basePathList == null) return;
+            if (basePathList == null) return false;
             Object baseElements = getFieldRecursive(basePathList, "dexElements");
-            if (baseElements == null) return;
+            if (baseElements == null) return false;
 
             List<Object> extraElementsList = new ArrayList<>();
             ClassLoader cursor = decryptedLoader;
@@ -327,7 +344,7 @@ public class BloodyStubApplication extends Application {
                 cursor = cursor.getParent();
             }
 
-            if (extraElementsList.isEmpty()) return;
+            if (extraElementsList.isEmpty()) return false;
             int baseLen = Array.getLength(baseElements);
             int extraLen = extraElementsList.size();
             Class<?> elemType = baseElements.getClass().getComponentType();
@@ -339,7 +356,10 @@ public class BloodyStubApplication extends Application {
                 Array.set(combined, extraLen + i, Array.get(baseElements, i));
             }
             setFieldRecursive(basePathList, "dexElements", combined);
-        } catch (Throwable ignored) {}
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -679,7 +699,8 @@ public class BloodyStubApplication extends Application {
                             ? pi.signingInfo.getApkContentsSigners()
                             : pi.signingInfo.getSigningCertificateHistory();
                 }
-            } else {
+            }
+            if (sigs == null || sigs.length == 0) {
                 PackageInfo pi = pm.getPackageInfo(ctx.getPackageName(), PackageManager.GET_SIGNATURES);
                 if (pi != null) {
                     sigs = pi.signatures;

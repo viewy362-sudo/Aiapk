@@ -8,6 +8,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
@@ -36,15 +37,8 @@ data class ProtectedBuildArtifact(
 
 /**
  * End-to-End Application Protection & Signing Pipeline (Bloody Team).
- * - For APK inputs:
- *     1) Full Stub Packing mode (dexBytecodeGuard + nativeJniStubPacking):
- *        Encrypts original classes*.dex into assets/bloody_wall/tex_atlas_N.<ext> (AES-256-GCM + XOR),
- *        injects compiled minApi-21 bloody_stub.dex as classes.dex, and patches binary AXML AndroidManifest.xml.
- *     2) Crash-safe Wrapper Stub mode (when DEX swap is OFF and APK is not already packed, e.g. Flutter/Unity or custom wrapper):
- *        Keeps original classes*.dex intact, appends bloody_stub.dex as classes{N+1}.dex, and preserves AppComponentFactory
- *        so runtime shields (Toast, FLAG_SECURE, Root, Login V1/V2, etc.) still execute cleanly!
- *     3) Strips debug metadata, 4B/4KB ZipAligns entries, and signs with JAR v1 + APK Signature Scheme v2.
- * - Exports companion Developer Security Kit .zip with Java/JNI/ProGuard/Resource-Shrinking rules.
+ * Streams large APK assets from a cached input archive via ApkEntrySource.FromZipEntry
+ * so even multi-dozen MB Sketchware / Android APKs protect & sign cleanly with low heap usage.
  */
 object AppProtectorPipeline {
 
@@ -69,12 +63,22 @@ object AppProtectorPipeline {
         val baseName = inputFileName.substringBeforeLast(".").ifBlank { "app" }
         val kitOutFile = File(context.cacheDir, "bloody_protected_output.zip")
         val signedApkOutFile = File(context.cacheDir, "bloody_signed_output.apk")
+        val cachedInputApkFile = File(context.cacheDir, "bloody_input_stage.apk")
 
         val tierLabel = profile.resolvedWallTier?.title ?: "Custom Profile"
         log("1/8 Inspecting input archive: $inputFileName ($tierLabel)")
         val inspection = DexApkInspector.inspectUri(context, inputUri, inputFileName)
         val primaryDexSha = inspection.dexReports.firstOrNull()?.sha256Short.orEmpty()
         log("   Detected ${inspection.detectedFramework} • ${inspection.dexReports.size} DEX, ${inspection.assetEntriesCount} asset(s).")
+
+        // Stage APK to cache file if signing so ApkEntrySource.FromZipEntry can stream entries 1-by-1
+        if (isApk && profile.signOutputApk) {
+            context.contentResolver.openInputStream(inputUri)?.use { rawIn ->
+                FileOutputStream(cachedInputApkFile).buffered(64 * 1024).use { out ->
+                    rawIn.copyTo(out, 64 * 1024)
+                }
+            } ?: throw IllegalStateException("Unable to read input APK stream")
+        }
 
         var encryptedAssets = 0
         var packedDexCount = 0
@@ -85,330 +89,386 @@ object AppProtectorPipeline {
         var detectedPkgName = profile.packageName
         var origAppClassName = ""
         var rawManifestBytes: ByteArray? = null
-        val apkNonDexEntries = mutableListOf<ApkEntryData>()
-        val apkOriginalDexEntries = mutableListOf<ApkEntryData>()
+        val apkNonDexEntryRefs = mutableListOf<Triple<String, String, Boolean>>()
+        val apkOriginalDexRefs = mutableListOf<String>()
         val packedDexForApkAssets = mutableListOf<Pair<String, ByteArray>>()
 
-        val seenKitNames = HashSet<String>()
-        log("2/8 Encrypting payloads & applying resource/metadata hardening...")
-        ZipOutputStream(FileOutputStream(kitOutFile).buffered()).use { kitZos ->
-            fun safeWriteKitEntry(name: String, bytes: ByteArray) {
-                val clean = name.trimStart('/')
-                if (clean.isNotBlank() && seenKitNames.add(clean)) {
-                    writeZipEntry(kitZos, clean, bytes)
+        try {
+            val seenKitNames = HashSet<String>()
+            log("2/8 Encrypting payloads & applying resource/metadata hardening...")
+            ZipOutputStream(FileOutputStream(kitOutFile).buffered(64 * 1024)).use { kitZos ->
+                fun safeWriteKitEntry(name: String, bytes: ByteArray) {
+                    val clean = name.trimStart('/')
+                    if (clean.isNotBlank() && seenKitNames.add(clean)) {
+                        writeZipEntry(kitZos, clean, bytes)
+                    }
                 }
-            }
-            context.contentResolver.openInputStream(inputUri)?.use { rawIn ->
-                ZipInputStream(rawIn.buffered()).use { zis ->
-                    var entry = zis.nextEntry
-                    while (entry != null) {
-                        val name = entry.name
-                        if (!entry.isDirectory) {
-                            val data = zis.readBytes()
-                            val lower = name.lowercase()
-                            val isOldSignature = lower.startsWith("meta-inf/") && (
-                                lower == "meta-inf/manifest.mf" ||
-                                    lower.endsWith(".sf") ||
-                                    lower.endsWith(".rsa") ||
-                                    lower.endsWith(".dsa") ||
-                                    lower.endsWith(".ec")
-                                )
-                            val isUnneededDebugMeta = profile.stripDebugMetadata && (
-                                lower == "debugprobeskt.bin" ||
-                                    lower == "kotlin-tooling-metadata.json" ||
-                                    (lower.startsWith("meta-inf/") && lower.endsWith(".version")) ||
-                                    lower.startsWith("meta-inf/com/android/build/")
-                                )
-                            val isDex = name.matches(Regex("^classes\\d*\\.dex$"))
-                            val isAsset = (name.startsWith("assets/") || name.contains("/assets/")) &&
-                                !name.endsWith(".enc")
 
-                            when {
-                                isOldSignature -> strippedMetadataCount++
-                                isUnneededDebugMeta -> strippedMetadataCount++
-                                else -> {
-                                    if (isApk && name == "AndroidManifest.xml") {
-                                        rawManifestBytes = data
-                                        val manifestInfo = AxmlManifestPatcher.inspectBinaryManifest(data)
-                                        if (manifestInfo.isValidBinaryAxml) {
-                                            if (manifestInfo.packageName.isNotBlank()) {
-                                                detectedPkgName = manifestInfo.packageName
+                val streamSource = if (isApk && profile.signOutputApk && cachedInputApkFile.exists()) {
+                    cachedInputApkFile.inputStream()
+                } else {
+                    context.contentResolver.openInputStream(inputUri)
+                }
+
+                streamSource?.use { rawIn ->
+                    ZipInputStream(rawIn.buffered(64 * 1024)).use { zis ->
+                        var entry = zis.nextEntry
+                        while (entry != null) {
+                            val name = entry.name
+                            if (!entry.isDirectory) {
+                                val lower = name.lowercase()
+                                val isOldSignature = lower.startsWith("meta-inf/") && (
+                                    lower == "meta-inf/manifest.mf" ||
+                                        lower.endsWith(".sf") ||
+                                        lower.endsWith(".rsa") ||
+                                        lower.endsWith(".dsa") ||
+                                        lower.endsWith(".ec")
+                                    )
+                                val isUnneededDebugMeta = profile.stripDebugMetadata && (
+                                    lower == "debugprobeskt.bin" ||
+                                        lower == "kotlin-tooling-metadata.json" ||
+                                        (lower.startsWith("meta-inf/") && lower.endsWith(".version")) ||
+                                        lower.startsWith("meta-inf/com/android/build/")
+                                    )
+                                val isDex = name.matches(Regex("^classes\\d*\\.dex$"))
+                                val isAsset = (name.startsWith("assets/") || name.contains("/assets/")) &&
+                                    !name.endsWith(".enc")
+
+                                when {
+                                    isOldSignature -> strippedMetadataCount++
+                                    isUnneededDebugMeta -> strippedMetadataCount++
+                                    else -> {
+                                        val needDataInPass1 = !isApk ||
+                                            name == "AndroidManifest.xml" ||
+                                            (isDex && profile.dexBytecodeGuard) ||
+                                            (isAsset && profile.assetAes256Encryption)
+
+                                        if (isApk && name == "AndroidManifest.xml") {
+                                            val data = zis.readBytes()
+                                            rawManifestBytes = data
+                                            val manifestInfo = AxmlManifestPatcher.inspectBinaryManifest(data)
+                                            if (manifestInfo.isValidBinaryAxml) {
+                                                if (manifestInfo.packageName.isNotBlank()) {
+                                                    detectedPkgName = manifestInfo.packageName
+                                                }
+                                                origAppClassName = manifestInfo.originalApplicationClass
                                             }
-                                            origAppClassName = manifestInfo.originalApplicationClass
+                                        } else if (isApk && isDex) {
+                                            apkOriginalDexRefs.add(name)
+                                            if (profile.dexBytecodeGuard) {
+                                                val data = zis.readBytes()
+                                                if (data.isNotEmpty()) {
+                                                    val packed = DexPackerEngine.packDexEntry(
+                                                        dexEntryName = name,
+                                                        dexBytes = data,
+                                                        passphrase = passphrase,
+                                                        disguiseExtension = profile.dexDisguiseExtension,
+                                                        index = packedDexCount
+                                                    )
+                                                    safeWriteKitEntry("disguised_dex_assets/${packed.disguisedAssetName}", packed.packedBytes)
+                                                    packedDexForApkAssets.add("assets/bloody_wall/${packed.disguisedAssetName}" to packed.packedBytes)
+                                                    disguisedDexNames.add(packed.disguisedAssetName)
+                                                    packedDexCount++
+                                                }
+                                            }
+                                        } else if (isApk) {
+                                            if (profile.signOutputApk && !lower.startsWith("assets/bloody_wall/")) {
+                                                val mustStore = lower == "resources.arsc" ||
+                                                    (lower.startsWith("lib/") && lower.endsWith(".so")) ||
+                                                    entry.method == ZipEntry.STORED
+                                                apkNonDexEntryRefs.add(Triple(name, name, mustStore))
+                                            }
+                                            if (isAsset && profile.assetAes256Encryption) {
+                                                val data = zis.readBytes()
+                                                if (data.isNotEmpty()) {
+                                                    val enc = CryptoVaultEngine.encryptBytes(data, passphrase)
+                                                    safeWriteKitEntry("protected_assets/${name.removePrefix("assets/")}.enc", enc.cipherBytes)
+                                                    encryptedAssets++
+                                                }
+                                            }
+                                        } else if (needDataInPass1 || !isApk) {
+                                            val data = zis.readBytes()
+                                            if (profile.assetAes256Encryption && isAsset && data.isNotEmpty()) {
+                                                val enc = CryptoVaultEngine.encryptBytes(data, passphrase)
+                                                safeWriteKitEntry("$name.enc", enc.cipherBytes)
+                                                encryptedAssets++
+                                            } else {
+                                                safeWriteKitEntry(name, data)
+                                            }
                                         }
-                                    } else if (isApk && isDex) {
-                                        apkOriginalDexEntries.add(ApkEntryData(name = name, bytes = data, forceStored = false))
-                                    } else if (isApk && profile.signOutputApk) {
-                                        val mustStore = lower == "resources.arsc" ||
-                                            (lower.startsWith("lib/") && lower.endsWith(".so")) ||
-                                            entry.method == ZipEntry.STORED
-                                        apkNonDexEntries.add(ApkEntryData(name = name, bytes = data, forceStored = mustStore))
-                                    }
-
-                                    if (isDex && profile.dexBytecodeGuard && data.isNotEmpty()) {
-                                        val packed = DexPackerEngine.packDexEntry(
-                                            dexEntryName = name,
-                                            dexBytes = data,
-                                            passphrase = passphrase,
-                                            disguiseExtension = profile.dexDisguiseExtension,
-                                            index = packedDexCount
-                                        )
-                                        safeWriteKitEntry("disguised_dex_assets/${packed.disguisedAssetName}", packed.packedBytes)
-                                        packedDexForApkAssets.add("assets/bloody_wall/${packed.disguisedAssetName}" to packed.packedBytes)
-                                        disguisedDexNames.add(packed.disguisedAssetName)
-                                        packedDexCount++
-                                    } else if (profile.assetAes256Encryption && isAsset && data.isNotEmpty()) {
-                                        val enc = CryptoVaultEngine.encryptBytes(data, passphrase)
-                                        val targetPath = if (isApk) {
-                                            "protected_assets/${name.removePrefix("assets/")}.enc"
-                                        } else {
-                                            "$name.enc"
-                                        }
-                                        safeWriteKitEntry(targetPath, enc.cipherBytes)
-                                        encryptedAssets++
-                                    } else if (!isApk) {
-                                        safeWriteKitEntry(name, data)
                                     }
                                 }
                             }
+                            zis.closeEntry()
+                            entry = zis.nextEntry
                         }
-                        zis.closeEntry()
-                        entry = zis.nextEntry
                     }
+                } ?: throw IllegalStateException("Unable to read input archive")
+
+                val effectiveProfile = profile.copy(packageName = detectedPkgName)
+                val pkgPath = detectedPkgName.replace('.', '/')
+
+                log("   Packed $packedDexCount DEX -> $disguisedDexNames; stripped $strippedMetadataCount meta file(s).")
+
+                val securityPrefix = if (isApk) {
+                    "security_patch/$pkgPath/security"
+                } else {
+                    "bloody_security/java/$pkgPath/security"
                 }
-            } ?: throw IllegalStateException("Unable to read input archive")
 
-            val effectiveProfile = profile.copy(packageName = detectedPkgName)
-            val pkgPath = detectedPkgName.replace('.', '/')
-
-            log("   Packed $packedDexCount DEX -> $disguisedDexNames; stripped $strippedMetadataCount meta file(s).")
-
-            val securityPrefix = if (isApk) {
-                "security_patch/$pkgPath/security"
-            } else {
-                "bloody_security/java/$pkgPath/security"
-            }
-
-            log("3/8 Generating 10-layer Java protection suite (${effectiveProfile.enabledLayersCount}/10)...")
-            val guardJava = SketchwareKitGenerator.generateSketchwareJavaGuard(effectiveProfile, primaryDexSha)
-            safeWriteKitEntry("$securityPrefix/DexShieldGuard.java", guardJava.toByteArray(Charsets.UTF_8))
-            injectedFiles++
-
-            if (effectiveProfile.assetAes256Encryption) {
-                val assetJava = SketchwareKitGenerator.generateAssetVaultHelperJava(effectiveProfile)
-                safeWriteKitEntry("$securityPrefix/AssetVaultHelper.java", assetJava.toByteArray(Charsets.UTF_8))
+                log("3/8 Generating 10-layer Java protection suite (${effectiveProfile.enabledLayersCount}/10)...")
+                val guardJava = SketchwareKitGenerator.generateSketchwareJavaGuard(effectiveProfile, primaryDexSha)
+                safeWriteKitEntry("$securityPrefix/DexShieldGuard.java", guardJava.toByteArray(Charsets.UTF_8))
                 injectedFiles++
-            }
 
-            if (effectiveProfile.sslPinningProxyBlock || effectiveProfile.detectHttpCanary) {
-                val sslJava = SketchwareKitGenerator.generateSslPinningJava(effectiveProfile)
-                safeWriteKitEntry("$securityPrefix/SslPinningGuard.java", sslJava.toByteArray(Charsets.UTF_8))
-                injectedFiles++
-            }
-
-            if (effectiveProfile.nativeJniStubPacking) {
-                log("4/8 Generating NDK C++ JNI decryptor & InMemoryDexClassLoader Stub...")
-                val cpp = DexPackerEngine.generateNativeJniCpp(effectiveProfile)
-                val cmake = DexPackerEngine.generateCMakeLists()
-                val stubJava = DexPackerEngine.generateStubApplicationJava(effectiveProfile)
-                val manifestPatch = DexPackerEngine.generateManifestStubPatch(effectiveProfile)
-                safeWriteKitEntry("native_jni/dex_shield_jni.cpp", cpp.toByteArray(Charsets.UTF_8))
-                safeWriteKitEntry("native_jni/CMakeLists.txt", cmake.toByteArray(Charsets.UTF_8))
-                safeWriteKitEntry("stub/$pkgPath/stub/DexStubApplication.java", stubJava.toByteArray(Charsets.UTF_8))
-                safeWriteKitEntry("stub/AndroidManifest_stub_patch.xml", manifestPatch.toByteArray(Charsets.UTF_8))
-                injectedFiles += 4
-            } else {
-                log("4/8 Native JNI & Stub generation skipped.")
-            }
-
-            if (effectiveProfile.stringMetadataObfuscation && secretToHide.isNotEmpty()) {
-                log("5/8 Obfuscating API keys into StringVault.java (zero plaintext)...")
-                val obf = StringObfuscatorEngine.obfuscate(secretToHide, "getProtectedSecret")
-                val vaultClass = buildString {
-                    appendLine("package ${effectiveProfile.packageName}.security;")
-                    appendLine()
-                    appendLine("public final class StringVault {")
-                    appendLine("    private StringVault() {}")
-                    appendLine(obf.javaDecoderCode.prependIndent("    "))
-                    appendLine("}")
+                if (effectiveProfile.assetAes256Encryption) {
+                    val assetJava = SketchwareKitGenerator.generateAssetVaultHelperJava(effectiveProfile)
+                    safeWriteKitEntry("$securityPrefix/AssetVaultHelper.java", assetJava.toByteArray(Charsets.UTF_8))
+                    injectedFiles++
                 }
-                safeWriteKitEntry("$securityPrefix/StringVault.java", vaultClass.toByteArray(Charsets.UTF_8))
+
+                if (effectiveProfile.sslPinningProxyBlock || effectiveProfile.detectHttpCanary) {
+                    val sslJava = SketchwareKitGenerator.generateSslPinningJava(effectiveProfile)
+                    safeWriteKitEntry("$securityPrefix/SslPinningGuard.java", sslJava.toByteArray(Charsets.UTF_8))
+                    injectedFiles++
+                }
+
+                if (effectiveProfile.nativeJniStubPacking) {
+                    log("4/8 Generating NDK C++ JNI decryptor & InMemoryDexClassLoader Stub...")
+                    val cpp = DexPackerEngine.generateNativeJniCpp(effectiveProfile)
+                    val cmake = DexPackerEngine.generateCMakeLists()
+                    val stubJava = DexPackerEngine.generateStubApplicationJava(effectiveProfile)
+                    val manifestPatch = DexPackerEngine.generateManifestStubPatch(effectiveProfile)
+                    safeWriteKitEntry("native_jni/dex_shield_jni.cpp", cpp.toByteArray(Charsets.UTF_8))
+                    safeWriteKitEntry("native_jni/CMakeLists.txt", cmake.toByteArray(Charsets.UTF_8))
+                    safeWriteKitEntry("stub/$pkgPath/stub/DexStubApplication.java", stubJava.toByteArray(Charsets.UTF_8))
+                    safeWriteKitEntry("stub/AndroidManifest_stub_patch.xml", manifestPatch.toByteArray(Charsets.UTF_8))
+                    injectedFiles += 4
+                } else {
+                    log("4/8 Native JNI & Stub generation skipped.")
+                }
+
+                if (effectiveProfile.stringMetadataObfuscation && secretToHide.isNotEmpty()) {
+                    log("5/8 Obfuscating API keys into StringVault.java (zero plaintext)...")
+                    val obf = StringObfuscatorEngine.obfuscate(secretToHide, "getProtectedSecret")
+                    val vaultClass = buildString {
+                        appendLine("package ${effectiveProfile.packageName}.security;")
+                        appendLine()
+                        appendLine("public final class StringVault {")
+                        appendLine("    private StringVault() {}")
+                        appendLine(obf.javaDecoderCode.prependIndent("    "))
+                        appendLine("}")
+                    }
+                    safeWriteKitEntry("$securityPrefix/StringVault.java", vaultClass.toByteArray(Charsets.UTF_8))
+                    injectedFiles++
+                } else {
+                    log("5/8 StringVault generation skipped.")
+                }
+
+                log("6/8 Writing R8/ProGuard & Policy Manifest (${effectiveProfile.selectedResourceConfuseCount} Resource rules)...")
+                val proguard = SketchwareKitGenerator.generateProguardRules(effectiveProfile)
+                safeWriteKitEntry("bloody_security/proguard-rules.pro", proguard.toByteArray(Charsets.UTF_8))
                 injectedFiles++
-            } else {
-                log("5/8 StringVault generation skipped.")
+
+                val policyJson = buildPolicyJson(
+                    profile = effectiveProfile,
+                    inputFileName = inputFileName,
+                    origAppClassName = origAppClassName,
+                    packedDexCount = packedDexCount,
+                    disguisedDexNames = disguisedDexNames,
+                    encryptedAssets = encryptedAssets,
+                    strippedMetadataCount = strippedMetadataCount,
+                    dexReports = inspection.dexReports
+                )
+                safeWriteKitEntry("bloody_security/dex_packing_manifest.json", policyJson.toByteArray(Charsets.UTF_8))
+                injectedFiles++
             }
 
-            log("6/8 Writing R8/ProGuard & Policy Manifest (${effectiveProfile.selectedResourceConfuseCount} Resource rules)...")
-            val proguard = SketchwareKitGenerator.generateProguardRules(effectiveProfile)
-            safeWriteKitEntry("bloody_security/proguard-rules.pro", proguard.toByteArray(Charsets.UTF_8))
-            injectedFiles++
+            // If input is an APK and signing is enabled, build a streaming ZipAligned & v1/v2 signed .apk
+            var signatureResult: ApkSignatureVerificationResult? = null
+            var stubDexInjected = false
+            var manifestPatched = false
 
-            val policyJson = buildPolicyJson(
-                profile = effectiveProfile,
+            if (isApk && profile.signOutputApk) {
+                log("7/8 Injecting Compiled Runtime Stub DEX + Patching Binary AXML Manifest...")
+                val identity = ApkSignerEngine.loadOrCreateSigningIdentity(
+                    context = context,
+                    commonName = profile.signerCommonName,
+                    organization = profile.signerOrg
+                )
+                val updatedProfile = profile.copy(
+                    packageName = detectedPkgName,
+                    expectedSignatureSha256 = identity.certSha256Colon
+                )
+
+                val stubDexBytes = runCatching {
+                    context.assets.open("bloody_stub.dex").use { it.readBytes() }
+                }.getOrNull()
+
+                val hasValidManifest = rawManifestBytes != null &&
+                    AxmlManifestPatcher.inspectBinaryManifest(rawManifestBytes!!).isValidBinaryAxml
+
+                val shouldReplaceDexWithStub = updatedProfile.dexBytecodeGuard &&
+                    updatedProfile.nativeJniStubPacking &&
+                    packedDexForApkAssets.isNotEmpty() &&
+                    stubDexBytes != null &&
+                    stubDexBytes.isNotEmpty() &&
+                    hasValidManifest
+
+                val wantsWrapperStub = !shouldReplaceDexWithStub &&
+                    inspection.existingPackerName == null &&
+                    apkOriginalDexRefs.isNotEmpty() &&
+                    stubDexBytes != null &&
+                    stubDexBytes.isNotEmpty() &&
+                    hasValidManifest &&
+                    hasAnyRuntimeWrapperPolicy(updatedProfile)
+
+                ZipFile(cachedInputApkFile).use { sourceZip ->
+                    val finalSources = mutableListOf<ApkEntrySource>()
+                    for ((entryName, zipKey, mustStore) in apkNonDexEntryRefs) {
+                        finalSources.add(
+                            ApkEntrySource.FromZipEntry(
+                                name = entryName,
+                                zipFile = sourceZip,
+                                entryName = zipKey,
+                                forceStored = mustStore
+                            )
+                        )
+                    }
+
+                    when {
+                        shouldReplaceDexWithStub -> {
+                            val patched = AxmlManifestPatcher.patchApplicationStub(
+                                axmlBytes = rawManifestBytes!!,
+                                removeAppComponentFactory = true
+                            )
+                            finalSources.add(ApkEntrySource.InMemory("AndroidManifest.xml", patched.patchedBytes))
+                            finalSources.add(ApkEntrySource.InMemory("classes.dex", stubDexBytes!!))
+                            finalSources.add(
+                                ApkEntrySource.InMemory(
+                                    "assets/bloody_wall/stub_seed.bin",
+                                    sealPassphraseForStub(passphrase, detectedPkgName)
+                                )
+                            )
+                            stubDexInjected = true
+                            manifestPatched = true
+                            log("   Injected compiled BloodyStubApplication classes.dex (${stubDexBytes.size / 1024} KB) & patched AndroidManifest.xml (origApp=${origAppClassName.ifBlank { "default" }}).")
+                        }
+                        wantsWrapperStub -> {
+                            val patched = AxmlManifestPatcher.patchApplicationStub(
+                                axmlBytes = rawManifestBytes!!,
+                                removeAppComponentFactory = false
+                            )
+                            val wrapperDexName = "classes${apkOriginalDexRefs.size + 1}.dex"
+                            finalSources.add(ApkEntrySource.InMemory("AndroidManifest.xml", patched.patchedBytes))
+                            for (dexName in apkOriginalDexRefs) {
+                                finalSources.add(ApkEntrySource.FromZipEntry(dexName, sourceZip, dexName))
+                            }
+                            finalSources.add(ApkEntrySource.InMemory(wrapperDexName, stubDexBytes!!))
+                            stubDexInjected = true
+                            manifestPatched = true
+                            log("   Attached crash-safe wrapper Stub ($wrapperDexName) alongside original DEX (origApp=${origAppClassName.ifBlank { "default" }}).")
+                        }
+                        else -> {
+                            rawManifestBytes?.let {
+                                finalSources.add(ApkEntrySource.InMemory("AndroidManifest.xml", it))
+                            }
+                            for (dexName in apkOriginalDexRefs) {
+                                finalSources.add(ApkEntrySource.FromZipEntry(dexName, sourceZip, dexName))
+                            }
+                            log("   Preserved original classes*.dex & manifest (Stub DEX swap disabled or already packed).")
+                        }
+                    }
+
+                    val embeddedProfile = if (shouldReplaceDexWithStub) {
+                        updatedProfile
+                    } else {
+                        updatedProfile.copy(dexBytecodeGuard = false)
+                    }
+
+                    val embeddedPolicy = buildPolicyJson(
+                        profile = embeddedProfile,
+                        inputFileName = inputFileName,
+                        origAppClassName = origAppClassName,
+                        packedDexCount = if (shouldReplaceDexWithStub) packedDexCount else 0,
+                        disguisedDexNames = if (shouldReplaceDexWithStub) disguisedDexNames else emptyList(),
+                        encryptedAssets = encryptedAssets,
+                        strippedMetadataCount = strippedMetadataCount,
+                        dexReports = inspection.dexReports
+                    ).toByteArray(Charsets.UTF_8)
+
+                    finalSources.add(ApkEntrySource.InMemory("assets/bloody_wall/protection_policy.json", embeddedPolicy))
+                    if (secretToHide.isNotEmpty()) {
+                        if (!shouldReplaceDexWithStub && wantsWrapperStub) {
+                            finalSources.add(
+                                ApkEntrySource.InMemory(
+                                    "assets/bloody_wall/stub_seed.bin",
+                                    sealPassphraseForStub(passphrase, detectedPkgName)
+                                )
+                            )
+                        }
+                        val encSecret = CryptoVaultEngine.encryptBytes(secretToHide.toByteArray(Charsets.UTF_8), passphrase)
+                        finalSources.add(ApkEntrySource.InMemory("assets/bloody_wall/vault_config.enc", encSecret.cipherBytes))
+                    }
+                    if (shouldReplaceDexWithStub) {
+                        for ((assetPath, packedBytes) in packedDexForApkAssets) {
+                            finalSources.add(ApkEntrySource.InMemory(assetPath, packedBytes))
+                        }
+                    }
+
+                    ApkSignerEngine.buildZipAlignedAndSignedApkFromSources(
+                        entries = finalSources,
+                        identity = identity,
+                        outputFile = signedApkOutFile
+                    )
+                }.also { verifiedSig ->
+                    signatureResult = verifiedSig
+                    log("8/8 ZipAligned & Signed APK verified! v1=${verifiedSig.hasV1JarSignature}, v2=${verifiedSig.hasV2SigningBlock}, RSA=${verifiedSig.v2RsaVerified}")
+                    log("    Cert SHA-256: ${verifiedSig.certSha256Colon}")
+                }
+            } else {
+                log("7/8 APK v1/v2 signing skipped (ZIP mode or signing disabled).")
+                log("8/8 Protected bundle forged (${kitOutFile.length()} bytes). Ready to save!")
+            }
+
+            val useSignedApkAsPrimary = isApk && profile.signOutputApk && signedApkOutFile.exists()
+            val primaryFile = if (useSignedApkAsPrimary) signedApkOutFile else kitOutFile
+            val primaryName = if (useSignedApkAsPrimary) {
+                "${baseName}_bloody_signed.apk"
+            } else {
+                "${baseName}_bloody_protected.zip"
+            }
+            val primaryMime = if (useSignedApkAsPrimary) {
+                "application/vnd.android.package-archive"
+            } else {
+                "application/zip"
+            }
+
+            return ProtectedBuildArtifact(
                 inputFileName = inputFileName,
-                origAppClassName = origAppClassName,
+                isApkInput = isApk,
+                primaryOutputFile = primaryFile,
+                suggestedPrimaryName = primaryName,
+                primaryMimeType = primaryMime,
+                primarySizeBytes = primaryFile.length(),
+                companionKitFile = if (useSignedApkAsPrimary) kitOutFile else null,
+                suggestedKitName = if (useSignedApkAsPrimary) "${baseName}_bloody_kit.zip" else null,
+                signedVerification = signatureResult,
+                stubDexInjected = stubDexInjected,
+                manifestPatched = manifestPatched,
+                detectedPackageName = detectedPkgName,
+                encryptedAssetsCount = encryptedAssets,
                 packedDexCount = packedDexCount,
                 disguisedDexNames = disguisedDexNames,
-                encryptedAssets = encryptedAssets,
                 strippedMetadataCount = strippedMetadataCount,
-                dexReports = inspection.dexReports
+                injectedSecurityFilesCount = injectedFiles,
+                dexCount = inspection.dexReports.size,
+                primaryDexSha256Short = primaryDexSha,
+                logSteps = logs
             )
-            safeWriteKitEntry("bloody_security/dex_packing_manifest.json", policyJson.toByteArray(Charsets.UTF_8))
-            injectedFiles++
+        } finally {
+            runCatching { cachedInputApkFile.delete() }
         }
-
-        // If input is an APK and signing is enabled, build a real ZipAligned & v1/v2 signed .apk
-        var signatureResult: ApkSignatureVerificationResult? = null
-        var stubDexInjected = false
-        var manifestPatched = false
-
-        if (isApk && profile.signOutputApk) {
-            log("7/8 Injecting Compiled Runtime Stub DEX + Patching Binary AXML Manifest...")
-            val identity = ApkSignerEngine.loadOrCreateSigningIdentity(
-                context = context,
-                commonName = profile.signerCommonName,
-                organization = profile.signerOrg
-            )
-            val updatedProfile = profile.copy(
-                packageName = detectedPkgName,
-                expectedSignatureSha256 = identity.certSha256Colon
-            )
-
-            val stubDexBytes = runCatching {
-                context.assets.open("bloody_stub.dex").use { it.readBytes() }
-            }.getOrNull()
-
-            val hasValidManifest = rawManifestBytes != null &&
-                AxmlManifestPatcher.inspectBinaryManifest(rawManifestBytes!!).isValidBinaryAxml
-
-            val shouldReplaceDexWithStub = updatedProfile.dexBytecodeGuard &&
-                updatedProfile.nativeJniStubPacking &&
-                packedDexForApkAssets.isNotEmpty() &&
-                stubDexBytes != null &&
-                stubDexBytes.isNotEmpty() &&
-                hasValidManifest
-
-            val wantsWrapperStub = !shouldReplaceDexWithStub &&
-                inspection.existingPackerName == null &&
-                apkOriginalDexEntries.isNotEmpty() &&
-                stubDexBytes != null &&
-                stubDexBytes.isNotEmpty() &&
-                hasValidManifest &&
-                hasAnyRuntimeWrapperPolicy(updatedProfile)
-
-            val finalEntries = apkNonDexEntries.filterNot {
-                it.name.startsWith("assets/bloody_wall/")
-            }.toMutableList()
-
-            when {
-                shouldReplaceDexWithStub -> {
-                    val patched = AxmlManifestPatcher.patchApplicationStub(
-                        axmlBytes = rawManifestBytes!!,
-                        removeAppComponentFactory = true
-                    )
-                    finalEntries.add(ApkEntryData("AndroidManifest.xml", patched.patchedBytes))
-                    finalEntries.add(ApkEntryData("classes.dex", stubDexBytes!!))
-                    finalEntries.add(ApkEntryData("assets/bloody_wall/stub_seed.bin", sealPassphraseForStub(passphrase, detectedPkgName)))
-                    stubDexInjected = true
-                    manifestPatched = true
-                    log("   Injected compiled BloodyStubApplication classes.dex (${stubDexBytes.size / 1024} KB) & patched AndroidManifest.xml (origApp=${origAppClassName.ifBlank { "default" }}).")
-                }
-                wantsWrapperStub -> {
-                    val patched = AxmlManifestPatcher.patchApplicationStub(
-                        axmlBytes = rawManifestBytes!!,
-                        removeAppComponentFactory = false
-                    )
-                    val wrapperDexName = "classes${apkOriginalDexEntries.size + 1}.dex"
-                    finalEntries.add(ApkEntryData("AndroidManifest.xml", patched.patchedBytes))
-                    finalEntries.addAll(apkOriginalDexEntries)
-                    finalEntries.add(ApkEntryData(wrapperDexName, stubDexBytes!!))
-                    stubDexInjected = true
-                    manifestPatched = true
-                    log("   Attached crash-safe wrapper Stub ($wrapperDexName) alongside original DEX (origApp=${origAppClassName.ifBlank { "default" }}).")
-                }
-                else -> {
-                    rawManifestBytes?.let { finalEntries.add(ApkEntryData("AndroidManifest.xml", it)) }
-                    finalEntries.addAll(apkOriginalDexEntries)
-                    log("   Preserved original classes*.dex & manifest (Stub DEX swap disabled or already packed).")
-                }
-            }
-
-            val embeddedProfile = if (shouldReplaceDexWithStub) {
-                updatedProfile
-            } else {
-                // Ensure runtime stub knows classes*.dex were kept unencrypted in wrapper/preserved mode
-                updatedProfile.copy(dexBytecodeGuard = false)
-            }
-
-            val embeddedPolicy = buildPolicyJson(
-                profile = embeddedProfile,
-                inputFileName = inputFileName,
-                origAppClassName = origAppClassName,
-                packedDexCount = if (shouldReplaceDexWithStub) packedDexCount else 0,
-                disguisedDexNames = if (shouldReplaceDexWithStub) disguisedDexNames else emptyList(),
-                encryptedAssets = encryptedAssets,
-                strippedMetadataCount = strippedMetadataCount,
-                dexReports = inspection.dexReports
-            ).toByteArray(Charsets.UTF_8)
-
-            finalEntries.add(ApkEntryData("assets/bloody_wall/protection_policy.json", embeddedPolicy))
-            if (secretToHide.isNotEmpty()) {
-                val encSecret = CryptoVaultEngine.encryptBytes(secretToHide.toByteArray(Charsets.UTF_8), passphrase)
-                finalEntries.add(ApkEntryData("assets/bloody_wall/vault_config.enc", encSecret.cipherBytes))
-            }
-            if (shouldReplaceDexWithStub) {
-                for ((assetPath, packedBytes) in packedDexForApkAssets) {
-                    finalEntries.add(ApkEntryData(assetPath, packedBytes))
-                }
-            }
-
-            signatureResult = ApkSignerEngine.buildZipAlignedAndSignedApk(
-                entries = finalEntries,
-                identity = identity,
-                outputFile = signedApkOutFile
-            )
-            log("8/8 ZipAligned & Signed APK verified! v1=${signatureResult.hasV1JarSignature}, v2=${signatureResult.hasV2SigningBlock}, RSA=${signatureResult.v2RsaVerified}")
-            log("    Cert SHA-256: ${signatureResult.certSha256Colon}")
-        } else {
-            log("7/8 APK v1/v2 signing skipped (ZIP mode or signing disabled).")
-            log("8/8 Protected bundle forged (${kitOutFile.length()} bytes). Ready to save!")
-        }
-
-        val useSignedApkAsPrimary = isApk && profile.signOutputApk && signedApkOutFile.exists()
-        val primaryFile = if (useSignedApkAsPrimary) signedApkOutFile else kitOutFile
-        val primaryName = if (useSignedApkAsPrimary) {
-            "${baseName}_bloody_signed.apk"
-        } else {
-            "${baseName}_bloody_protected.zip"
-        }
-        val primaryMime = if (useSignedApkAsPrimary) {
-            "application/vnd.android.package-archive"
-        } else {
-            "application/zip"
-        }
-
-        return ProtectedBuildArtifact(
-            inputFileName = inputFileName,
-            isApkInput = isApk,
-            primaryOutputFile = primaryFile,
-            suggestedPrimaryName = primaryName,
-            primaryMimeType = primaryMime,
-            primarySizeBytes = primaryFile.length(),
-            companionKitFile = if (useSignedApkAsPrimary) kitOutFile else null,
-            suggestedKitName = if (useSignedApkAsPrimary) "${baseName}_bloody_kit.zip" else null,
-            signedVerification = signatureResult,
-            stubDexInjected = stubDexInjected,
-            manifestPatched = manifestPatched,
-            detectedPackageName = detectedPkgName,
-            encryptedAssetsCount = encryptedAssets,
-            packedDexCount = packedDexCount,
-            disguisedDexNames = disguisedDexNames,
-            strippedMetadataCount = strippedMetadataCount,
-            injectedSecurityFilesCount = injectedFiles,
-            dexCount = inspection.dexReports.size,
-            primaryDexSha256Short = primaryDexSha,
-            logSteps = logs
-        )
     }
 
     private fun hasAnyRuntimeWrapperPolicy(p: ProtectionProfile): Boolean =

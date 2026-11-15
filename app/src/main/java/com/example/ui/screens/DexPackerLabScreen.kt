@@ -49,9 +49,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.audio.SoundFxManager
+import com.example.i18n.FeatureIds
 import com.example.security.DexPackerEngine
 import com.example.security.ProtectionProfile
 import com.example.ui.ShieldUiState
+import com.example.ui.components.ExplainInfoIconButton
 import com.example.ui.components.MonospaceCodePanel
 import com.example.ui.components.StatusPill
 import com.example.ui.theme.JetBrainsMonoFamily
@@ -64,6 +66,7 @@ fun DexPackerLabScreen(
     onUpdateProfile: ((ProtectionProfile) -> ProtectionProfile) -> Unit,
     onRunRamPackTest: () -> Unit,
     onCopiedNotice: (String) -> Unit,
+    onInspectFeature: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
@@ -95,11 +98,23 @@ fun DexPackerLabScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {
-                Text(
-                    text = "classes.dex Packer & JNI Lab",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "classes.dex Packer & JNI Lab",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.weight(1f)
+                    )
+                    ExplainInfoIconButton(
+                        contentDescription = "Explain DEX Packer & JNI Lab",
+                        testTag = "info_dex_packer_lab",
+                        onClick = { onInspectFeature(FeatureIds.DEX_PACKER_LAB) }
+                    )
+                }
                 Text(
                     text = "Build-Time AES/XOR DEX disguise + Runtime NDK C++ RAM decryption & InMemoryDexClassLoader architecture.",
                     style = MaterialTheme.typography.bodyMedium,

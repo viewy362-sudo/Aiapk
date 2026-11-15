@@ -55,6 +55,7 @@ fun ObfuscatorScreen(
     onTriggerCrashTest: () -> Unit,
     onClearFaults: () -> Unit,
     onCopiedNotice: (String) -> Unit,
+    onInspectFeature: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -69,11 +70,23 @@ fun ObfuscatorScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {
-                Text(
-                    text = "String & Crash Guard Lab",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "String & Crash Guard Lab",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.weight(1f)
+                    )
+                    com.example.ui.components.ExplainInfoIconButton(
+                        contentDescription = "Explain String & Crash Guard Lab",
+                        testTag = "info_string_crash_lab",
+                        onClick = { onInspectFeature(com.example.i18n.FeatureIds.STRING_CRASH_LAB) }
+                    )
+                }
                 Text(
                     text = "Compile plaintext keys into rotating-XOR byte decoders and test the Zero-Crash Exception Guard live.",
                     style = MaterialTheme.typography.bodyMedium,

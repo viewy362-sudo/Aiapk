@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.Card
@@ -41,17 +42,24 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.audio.SoundFxManager
+import com.example.i18n.AppStrings
+import com.example.i18n.FeatureIds
 import com.example.security.ProtectionProfile
 import com.example.security.WallProtectionTier
+import com.example.ui.components.ExplainInfoIconButton
 
 @Composable
 fun QuickThreatMatrixCard(
     profile: ProtectionProfile,
+    isExplainMode: Boolean,
+    onInspectFeature: (String) -> Unit,
     onUpdateProfile: ((ProtectionProfile) -> ProtectionProfile) -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
+    val strings = AppStrings.get(profile.resolvedLanguage)
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
@@ -63,7 +71,7 @@ fun QuickThreatMatrixCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "Quick Threat Matrix",
+                text = strings.quickThreatMatrixTitle,
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.secondary
             )
@@ -71,6 +79,9 @@ fun QuickThreatMatrixCard(
                 CompactCheckTile(
                     label = "Check Emulator",
                     checked = profile.emulatorCloneShield,
+                    featureId = FeatureIds.EMULATOR_SHIELD,
+                    isExplainMode = isExplainMode,
+                    onInspectFeature = onInspectFeature,
                     testTag = "quick_emulator",
                     modifier = Modifier.weight(1f)
                 ) { c ->
@@ -81,6 +92,9 @@ fun QuickThreatMatrixCard(
                 CompactCheckTile(
                     label = "Check Root",
                     checked = profile.rootMagiskDetection,
+                    featureId = FeatureIds.ROOT_SHIELD,
+                    isExplainMode = isExplainMode,
+                    onInspectFeature = onInspectFeature,
                     testTag = "quick_root",
                     modifier = Modifier.weight(1f)
                 ) { c ->
@@ -93,6 +107,9 @@ fun QuickThreatMatrixCard(
                 CompactCheckTile(
                     label = "Check Xposed",
                     checked = profile.antiDebugFridaShield,
+                    featureId = FeatureIds.ANTI_DEBUG_FRIDA,
+                    isExplainMode = isExplainMode,
+                    onInspectFeature = onInspectFeature,
                     testTag = "quick_xposed",
                     modifier = Modifier.weight(1f)
                 ) { c ->
@@ -103,6 +120,9 @@ fun QuickThreatMatrixCard(
                 CompactCheckTile(
                     label = "Check VPN",
                     checked = profile.sslPinningProxyBlock,
+                    featureId = FeatureIds.SSL_VPN_BLOCK,
+                    isExplainMode = isExplainMode,
+                    onInspectFeature = onInspectFeature,
                     testTag = "quick_vpn",
                     modifier = Modifier.weight(1f)
                 ) { c ->
@@ -118,10 +138,13 @@ fun QuickThreatMatrixCard(
 @Composable
 fun WallProtectionTierCard(
     profile: ProtectionProfile,
+    isExplainMode: Boolean,
+    onInspectFeature: (String) -> Unit,
     onApplyWallTier: (WallProtectionTier) -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
     val activeTier = profile.resolvedWallTier
+    val strings = AppStrings.get(profile.resolvedLanguage)
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
@@ -133,12 +156,13 @@ fun WallProtectionTierCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "Wall Protection Engine (${if (activeTier != null) activeTier.title else "None Selected"})",
+                text = "${strings.wallProtectionTitle} (${if (activeTier != null) activeTier.title else "None"})",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
             WallProtectionTier.entries.forEach { tier ->
                 val selected = tier == activeTier
+                val featureId = "wall_${tier.name.lowercase()}"
                 Surface(
                     shape = MaterialTheme.shapes.small,
                     color = if (selected) {
@@ -155,21 +179,29 @@ fun WallProtectionTierCard(
                         .testTag("wall_tier_${tier.name.lowercase()}")
                         .clickable {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onApplyWallTier(tier)
+                            if (isExplainMode) {
+                                onInspectFeature(featureId)
+                            } else {
+                                onApplyWallTier(tier)
+                            }
                         }
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(start = 8.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(
                             selected = selected,
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onApplyWallTier(tier)
+                                if (isExplainMode) {
+                                    onInspectFeature(featureId)
+                                } else {
+                                    onApplyWallTier(tier)
+                                }
                             }
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -188,6 +220,11 @@ fun WallProtectionTierCard(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                        ExplainInfoIconButton(
+                            contentDescription = "Explain ${tier.title}",
+                            testTag = "info_$featureId",
+                            onClick = { onInspectFeature(featureId) }
+                        )
                     }
                 }
             }
@@ -198,16 +235,19 @@ fun WallProtectionTierCard(
 @Composable
 fun ResourcesAndConfigAccordionCard(
     profile: ProtectionProfile,
+    isExplainMode: Boolean,
+    onInspectFeature: (String) -> Unit,
     onUpdateProfile: ((ProtectionProfile) -> ProtectionProfile) -> Unit,
     onSelectAllLayers: (Boolean) -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
+    val strings = AppStrings.get(profile.resolvedLanguage)
     var showLayers by rememberSaveable { mutableStateOf(true) }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // 1. 10-Layer Security Suite
         ExpandableSectionCard(
-            title = "10-Layer Security Suite (${profile.enabledLayersCount}/10)",
+            title = "${strings.core10Title} (${profile.enabledLayersCount}/10)",
             expanded = showLayers,
             onToggleExpand = {
                 SoundFxManager.playClick()
@@ -219,49 +259,140 @@ fun ResourcesAndConfigAccordionCard(
                 onSelectAllLayers(profile.enabledLayersCount < 10)
             }
         ) {
-            OptionRow("1. DEX Packing & 65K Method Guard", "Disguises classes*.dex into ${profile.dexDisguiseExtension}", profile.dexBytecodeGuard, "opt_dex") { c ->
-                onUpdateProfile { it.copy(dexBytecodeGuard = c) }
-            }
-            OptionRow("Native C++ JNI + InMemoryDexClassLoader Stub", "Generates Phase B RAM-only loader & Manifest patch", profile.nativeJniStubPacking, "opt_native_stub") { c ->
-                onUpdateProfile { it.copy(nativeJniStubPacking = c) }
-            }
-            OptionRow("2. Asset & Resource AES-256-GCM", "Encrypts app assets with authenticated DXS1 cipher", profile.assetAes256Encryption, "opt_asset") { c ->
-                onUpdateProfile { it.copy(assetAes256Encryption = c) }
-            }
-            OptionRow("3. Anti-Tamper & Signature Lock", "Blocks re-signed or tampered clones", profile.antiTamperSignature, "opt_tamper") { c ->
-                onUpdateProfile { it.copy(antiTamperSignature = c) }
-            }
-            OptionRow("4. Anti-Debug & Frida / Xposed Shield", "Blocks TracerPid, Frida-server & Xposed hooks", profile.antiDebugFridaShield, "opt_frida") { c ->
-                onUpdateProfile { it.copy(antiDebugFridaShield = c) }
-            }
-            OptionRow("5. String & API Key Obfuscation", "Hides keys inside XOR byte-rotated StringVault", profile.stringMetadataObfuscation, "opt_strings") { c ->
-                onUpdateProfile { it.copy(stringMetadataObfuscation = c) }
-            }
-            OptionRow("6. Zero-Crash & ANR Exception Guard", "Global thread handler preventing fatal crashes", profile.zeroCrashExceptionGuard, "opt_crash") { c ->
-                onUpdateProfile { it.copy(zeroCrashExceptionGuard = c) }
-            }
-            OptionRow("7. Root & Magisk Environment Shield", "Detects su, Magisk & test-keys", profile.rootMagiskDetection, "opt_root") { c ->
-                onUpdateProfile { it.copy(rootMagiskDetection = c) }
-            }
-            OptionRow("8. Emulator & Virtual-Clone Blocker", "Blocks QEMU & Parallel Space clones", profile.emulatorCloneShield, "opt_emulator") { c ->
-                onUpdateProfile { it.copy(emulatorCloneShield = c) }
-            }
-            OptionRow("9. SSL Pinning & Proxy/VPN Block", "SPKI pinning + HTTP proxy & tun0/ppp0 block", profile.sslPinningProxyBlock, "opt_ssl") { c ->
-                onUpdateProfile { it.copy(sslPinningProxyBlock = c) }
-            }
-            OptionRow("10. Anti-Screenshot & Tapjacking", "Enforces FLAG_SECURE & obscured touch protection", profile.screenTapjackingShield, "opt_screen") { c ->
-                onUpdateProfile { it.copy(screenTapjackingShield = c) }
-            }
+            OptionRow(
+                title = "1. DEX Packing & 65K Method Guard",
+                subtitle = "Disguises classes*.dex into ${profile.dexDisguiseExtension}",
+                checked = profile.dexBytecodeGuard,
+                testTag = "opt_dex",
+                featureId = FeatureIds.DEX_PACKING,
+                isExplainMode = isExplainMode,
+                onInspectFeature = onInspectFeature
+            ) { c -> onUpdateProfile { it.copy(dexBytecodeGuard = c) } }
+
+            OptionRow(
+                title = "Native C++ JNI + InMemoryDexClassLoader Stub",
+                subtitle = "Generates Phase B RAM-only loader & Manifest patch",
+                checked = profile.nativeJniStubPacking,
+                testTag = "opt_native_stub",
+                featureId = FeatureIds.NATIVE_JNI_STUB,
+                isExplainMode = isExplainMode,
+                onInspectFeature = onInspectFeature
+            ) { c -> onUpdateProfile { it.copy(nativeJniStubPacking = c) } }
+
+            OptionRow(
+                title = "2. Asset & Resource AES-256-GCM",
+                subtitle = "Encrypts app assets with authenticated DXS1 cipher",
+                checked = profile.assetAes256Encryption,
+                testTag = "opt_asset",
+                featureId = FeatureIds.ASSET_AES,
+                isExplainMode = isExplainMode,
+                onInspectFeature = onInspectFeature
+            ) { c -> onUpdateProfile { it.copy(assetAes256Encryption = c) } }
+
+            OptionRow(
+                title = "3. Anti-Tamper & Signature Lock",
+                subtitle = "Blocks re-signed or tampered clones",
+                checked = profile.antiTamperSignature,
+                testTag = "opt_tamper",
+                featureId = FeatureIds.ANTI_TAMPER,
+                isExplainMode = isExplainMode,
+                onInspectFeature = onInspectFeature
+            ) { c -> onUpdateProfile { it.copy(antiTamperSignature = c) } }
+
+            OptionRow(
+                title = "4. Anti-Debug & Frida / Xposed Shield",
+                subtitle = "Blocks TracerPid, Frida-server & Xposed hooks",
+                checked = profile.antiDebugFridaShield,
+                testTag = "opt_frida",
+                featureId = FeatureIds.ANTI_DEBUG_FRIDA,
+                isExplainMode = isExplainMode,
+                onInspectFeature = onInspectFeature
+            ) { c -> onUpdateProfile { it.copy(antiDebugFridaShield = c) } }
+
+            OptionRow(
+                title = "5. String & API Key Obfuscation",
+                subtitle = "Hides keys inside XOR byte-rotated StringVault",
+                checked = profile.stringMetadataObfuscation,
+                testTag = "opt_strings",
+                featureId = FeatureIds.STRING_OBFUSCATE,
+                isExplainMode = isExplainMode,
+                onInspectFeature = onInspectFeature
+            ) { c -> onUpdateProfile { it.copy(stringMetadataObfuscation = c) } }
+
+            OptionRow(
+                title = "6. Zero-Crash & ANR Exception Guard",
+                subtitle = "Global thread handler preventing fatal crashes",
+                checked = profile.zeroCrashExceptionGuard,
+                testTag = "opt_crash",
+                featureId = FeatureIds.ZERO_CRASH,
+                isExplainMode = isExplainMode,
+                onInspectFeature = onInspectFeature
+            ) { c -> onUpdateProfile { it.copy(zeroCrashExceptionGuard = c) } }
+
+            OptionRow(
+                title = "7. Root & Magisk Environment Shield",
+                subtitle = "Detects su, Magisk & test-keys",
+                checked = profile.rootMagiskDetection,
+                testTag = "opt_root",
+                featureId = FeatureIds.ROOT_SHIELD,
+                isExplainMode = isExplainMode,
+                onInspectFeature = onInspectFeature
+            ) { c -> onUpdateProfile { it.copy(rootMagiskDetection = c) } }
+
+            OptionRow(
+                title = "8. Emulator & Virtual-Clone Blocker",
+                subtitle = "Blocks QEMU & Parallel Space clones",
+                checked = profile.emulatorCloneShield,
+                testTag = "opt_emulator",
+                featureId = FeatureIds.EMULATOR_SHIELD,
+                isExplainMode = isExplainMode,
+                onInspectFeature = onInspectFeature
+            ) { c -> onUpdateProfile { it.copy(emulatorCloneShield = c) } }
+
+            OptionRow(
+                title = "9. SSL Pinning & Proxy/VPN Block",
+                subtitle = "SPKI pinning + HTTP proxy & tun0/ppp0 block",
+                checked = profile.sslPinningProxyBlock,
+                testTag = "opt_ssl",
+                featureId = FeatureIds.SSL_VPN_BLOCK,
+                isExplainMode = isExplainMode,
+                onInspectFeature = onInspectFeature
+            ) { c -> onUpdateProfile { it.copy(sslPinningProxyBlock = c) } }
+
+            OptionRow(
+                title = "10. Anti-Screenshot & Tapjacking",
+                subtitle = "Enforces FLAG_SECURE & obscured touch protection",
+                checked = profile.screenTapjackingShield,
+                testTag = "opt_screen",
+                featureId = FeatureIds.SCREEN_TAPJACKING,
+                isExplainMode = isExplainMode,
+                onInspectFeature = onInspectFeature
+            ) { c -> onUpdateProfile { it.copy(screenTapjackingShield = c) } }
         }
 
         // 2. Resources Confusing (16 options + metadata strip)
-        ResourcesConfusingSection(profile = profile, onUpdateProfile = onUpdateProfile)
+        ResourcesConfusingSection(
+            profile = profile,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature,
+            onUpdateProfile = onUpdateProfile
+        )
 
         // 3. Configuration (13 options)
-        ConfigurationSection(profile = profile, onUpdateProfile = onUpdateProfile)
+        ConfigurationSection(
+            profile = profile,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature,
+            onUpdateProfile = onUpdateProfile
+        )
 
         // 4. Advanced Settings (Login Validate V1 & V2)
-        AdvancedSettingsSection(profile = profile, onUpdateProfile = onUpdateProfile)
+        AdvancedSettingsSection(
+            profile = profile,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature,
+            onUpdateProfile = onUpdateProfile
+        )
     }
 }
 
@@ -284,6 +415,9 @@ fun VipOrFreeBadge(badge: String) {
 private fun CompactCheckTile(
     label: String,
     checked: Boolean,
+    featureId: String,
+    isExplainMode: Boolean,
+    onInspectFeature: (String) -> Unit,
     testTag: String,
     modifier: Modifier = Modifier,
     onCheckedChange: (Boolean) -> Unit
@@ -294,23 +428,47 @@ private fun CompactCheckTile(
         border = BorderStroke(1.dp, if (checked) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
         modifier = modifier
             .height(48.dp)
-            .clickable { onCheckedChange(!checked) }
+            .clickable {
+                if (isExplainMode) {
+                    onInspectFeature(featureId)
+                } else {
+                    onCheckedChange(!checked)
+                }
+            }
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 6.dp),
+            modifier = Modifier.padding(start = 2.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Checkbox(
                 checked = checked,
-                onCheckedChange = onCheckedChange,
+                onCheckedChange = { c ->
+                    if (isExplainMode) onInspectFeature(featureId) else onCheckedChange(c)
+                },
                 modifier = Modifier.testTag(testTag)
             )
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
             )
+            androidx.compose.foundation.layout.Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(width = 28.dp, height = 48.dp)
+                    .clickable { onInspectFeature(featureId) }
+                    .testTag("info_$testTag")
+            ) {
+                Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Outlined.Info,
+                    contentDescription = "Explain $label",
+                    tint = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
         }
     }
 }
@@ -378,6 +536,9 @@ fun OptionRow(
     checked: Boolean,
     testTag: String,
     badge: String? = null,
+    featureId: String? = null,
+    isExplainMode: Boolean = false,
+    onInspectFeature: ((String) -> Unit)? = null,
     onCheckedChange: (Boolean) -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -385,9 +546,14 @@ fun OptionRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable {
-                SoundFxManager.playToggle(!checked)
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onCheckedChange(!checked)
+                if (isExplainMode && featureId != null && onInspectFeature != null) {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onInspectFeature(featureId)
+                } else {
+                    SoundFxManager.playToggle(!checked)
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onCheckedChange(!checked)
+                }
             }
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -400,7 +566,8 @@ fun OptionRow(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
                 if (badge != null) {
                     VipOrFreeBadge(badge = badge)
@@ -412,13 +579,25 @@ fun OptionRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        Spacer(modifier = Modifier.width(8.dp))
+        if (featureId != null && onInspectFeature != null) {
+            ExplainInfoIconButton(
+                contentDescription = "Explain $title",
+                testTag = "info_$testTag",
+                onClick = { onInspectFeature(featureId) }
+            )
+        }
+        Spacer(modifier = Modifier.width(4.dp))
         Switch(
             checked = checked,
             onCheckedChange = { c ->
-                SoundFxManager.playToggle(c)
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onCheckedChange(c)
+                if (isExplainMode && featureId != null && onInspectFeature != null) {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onInspectFeature(featureId)
+                } else {
+                    SoundFxManager.playToggle(c)
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onCheckedChange(c)
+                }
             },
             modifier = Modifier.testTag(testTag)
         )

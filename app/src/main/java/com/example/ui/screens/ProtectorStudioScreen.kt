@@ -28,17 +28,19 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.EnhancedEncryption
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.FolderZip
+import androidx.compose.material.icons.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.SaveAlt
-import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Button
@@ -72,10 +74,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.audio.SoundFxManager
+import com.example.i18n.AppStrings
+import com.example.i18n.FeatureIds
 import com.example.security.ProtectionProfile
 import com.example.security.WallProtectionTier
 import com.example.security.WarningSeverity
 import com.example.ui.ShieldUiState
+import com.example.ui.components.ExplainInfoIconButton
 import com.example.ui.components.StatusPill
 import com.example.ui.theme.JetBrainsMonoFamily
 
@@ -86,6 +91,10 @@ private const val TELEGRAM_CHANNEL_URL = "https://t.me/BLOODYTEAMOFFICIAL"
 fun ProtectorStudioScreen(
     uiState: ShieldUiState,
     profile: ProtectionProfile,
+    isExplainMode: Boolean,
+    onToggleExplainMode: () -> Unit,
+    onOpenFeatureGuide: () -> Unit,
+    onInspectFeature: (String) -> Unit,
     onPickInputArchive: (Uri) -> Unit,
     onLoadSelfApk: () -> Unit,
     onUpdateProfile: ((ProtectionProfile) -> ProtectionProfile) -> Unit,
@@ -104,6 +113,7 @@ fun ProtectorStudioScreen(
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    val strings = AppStrings.get(profile.resolvedLanguage)
 
     val inputPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -188,12 +198,12 @@ fun ProtectorStudioScreen(
                             }
 
                             Text(
-                                text = "Bloody Team Apk Shield",
+                                text = strings.heroTitle,
                                 style = MaterialTheme.typography.headlineMedium,
                                 color = Color.White
                             )
                             Text(
-                                text = "Select any APK or Sketchware ZIP, customize your protection profile & theme, and export a ZipAligned v1+v2 signed APK + JNI/Stub kit.",
+                                text = strings.heroSubtitle,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color(0xFFE2E8F0)
                             )
@@ -214,7 +224,7 @@ fun ProtectorStudioScreen(
                                 ) {
                                     Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Random Design", maxLines = 1)
+                                    Text(strings.randomDesign, maxLines = 1)
                                 }
                                 OutlinedButton(
                                     onClick = {
@@ -230,9 +240,82 @@ fun ProtectorStudioScreen(
                                 ) {
                                     Icon(Icons.Rounded.Palette, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Select Theme", maxLines = 1)
+                                    Text(strings.selectTheme, maxLines = 1)
                                 }
                             }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onOpenFeatureGuide()
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(44.dp)
+                                        .testTag("hero_open_guide_button")
+                                ) {
+                                    Icon(Icons.Rounded.MenuBook, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(strings.guideButtonLabel, maxLines = 1)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onToggleExplainMode()
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        containerColor = if (isExplainMode) MaterialTheme.colorScheme.secondary else Color.Transparent,
+                                        contentColor = if (isExplainMode) MaterialTheme.colorScheme.onSecondary else Color.White
+                                    ),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isExplainMode) MaterialTheme.colorScheme.secondary else Color.White.copy(alpha = 0.45f)
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(44.dp)
+                                        .testTag("hero_explain_mode_button")
+                                ) {
+                                    Icon(Icons.Rounded.HelpOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(if (isExplainMode) strings.explainModeOn else strings.explainModeOff, maxLines = 1)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (isExplainMode) {
+                item {
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("explain_mode_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.HelpOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                text = strings.explainModeBanner,
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                     }
                 }
@@ -251,7 +334,7 @@ fun ProtectorStudioScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = "Step 1 • Select Input Application (.apk / .zip)",
+                            text = strings.step1Title,
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -280,7 +363,7 @@ fun ProtectorStudioScreen(
                             ) {
                                 Icon(Icons.Rounded.FolderZip, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Select APK / File", maxLines = 1)
+                                Text(strings.selectApkButton, maxLines = 1)
                             }
 
                             OutlinedButton(
@@ -295,7 +378,7 @@ fun ProtectorStudioScreen(
                             ) {
                                 Icon(Icons.Rounded.Android, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Use This APK", maxLines = 1)
+                                Text(strings.useThisApkButton, maxLines = 1)
                             }
                         }
 
@@ -331,10 +414,15 @@ fun ProtectorStudioScreen(
                                                     color = MaterialTheme.colorScheme.onSurface
                                                 )
                                             }
+                                            ExplainInfoIconButton(
+                                                contentDescription = "Explain Smart Auto",
+                                                testTag = "info_smart_auto",
+                                                onClick = { onInspectFeature(FeatureIds.SMART_AUTO) }
+                                            )
                                             FilledTonalButton(
                                                 onClick = {
                                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    onReapplySmartAuto()
+                                                    if (isExplainMode) onInspectFeature(FeatureIds.SMART_AUTO) else onReapplySmartAuto()
                                                 },
                                                 modifier = Modifier
                                                     .height(40.dp)
@@ -342,7 +430,7 @@ fun ProtectorStudioScreen(
                                             ) {
                                                 Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
                                                 Spacer(modifier = Modifier.width(4.dp))
-                                                Text("Smart Auto", maxLines = 1)
+                                                Text(strings.smartAutoButton, maxLines = 1)
                                             }
                                         }
                                         Text(
@@ -380,7 +468,7 @@ fun ProtectorStudioScreen(
                                             ) {
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text(
-                                                        text = "Asset & Data File Encryption",
+                                                        text = strings.assetEncryptionTitle,
                                                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                                         color = MaterialTheme.colorScheme.onSurface
                                                     )
@@ -394,13 +482,21 @@ fun ProtectorStudioScreen(
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
                                                 }
-                                                Spacer(modifier = Modifier.width(8.dp))
+                                                ExplainInfoIconButton(
+                                                    contentDescription = "Explain Asset & Data File Encryption",
+                                                    testTag = "info_quick_asset_enc",
+                                                    onClick = { onInspectFeature(FeatureIds.ASSET_AES) }
+                                                )
                                                 Switch(
                                                     checked = profile.assetAes256Encryption,
                                                     onCheckedChange = { c ->
-                                                        SoundFxManager.playToggle(c)
-                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                        onUpdateProfile { it.copy(assetAes256Encryption = c) }
+                                                        if (isExplainMode) {
+                                                            onInspectFeature(FeatureIds.ASSET_AES)
+                                                        } else {
+                                                            SoundFxManager.playToggle(c)
+                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            onUpdateProfile { it.copy(assetAes256Encryption = c) }
+                                                        }
                                                     },
                                                     modifier = Modifier.testTag("quick_asset_encryption_switch")
                                                 )
@@ -491,6 +587,8 @@ fun ProtectorStudioScreen(
             item {
                 QuickThreatMatrixCard(
                     profile = profile,
+                    isExplainMode = isExplainMode,
+                    onInspectFeature = onInspectFeature,
                     onUpdateProfile = onUpdateProfile
                 )
             }
@@ -499,6 +597,8 @@ fun ProtectorStudioScreen(
             item {
                 WallProtectionTierCard(
                     profile = profile,
+                    isExplainMode = isExplainMode,
+                    onInspectFeature = onInspectFeature,
                     onApplyWallTier = onApplyWallTier
                 )
             }
@@ -516,7 +616,7 @@ fun ProtectorStudioScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = "Step 2 • APK Signing Identity & Disguise Keys",
+                            text = strings.step2Title,
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -559,12 +659,21 @@ fun ProtectorStudioScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                            ExplainInfoIconButton(
+                                contentDescription = "Explain Auto-Sign Output APK",
+                                testTag = "info_sign_output_apk",
+                                onClick = { onInspectFeature(FeatureIds.SIGN_OUTPUT_APK) }
+                            )
                             Switch(
                                 checked = profile.signOutputApk,
                                 onCheckedChange = { c ->
-                                    SoundFxManager.playToggle(c)
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    onUpdateProfile { it.copy(signOutputApk = c) }
+                                    if (isExplainMode) {
+                                        onInspectFeature(FeatureIds.SIGN_OUTPUT_APK)
+                                    } else {
+                                        SoundFxManager.playToggle(c)
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onUpdateProfile { it.copy(signOutputApk = c) }
+                                    }
                                 },
                                 modifier = Modifier.testTag("toggle_sign_output_apk")
                             )
@@ -589,11 +698,23 @@ fun ProtectorStudioScreen(
                             }
                         }
 
-                        Text(
-                            text = "Disguise Packed classes.dex Vault As:",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Disguise Packed classes.dex Vault As:",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                            ExplainInfoIconButton(
+                                contentDescription = "Explain Disguise Format",
+                                testTag = "info_disguise_format",
+                                onClick = { onInspectFeature(FeatureIds.DISGUISE_FORMAT) }
+                            )
+                        }
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth()
@@ -666,6 +787,8 @@ fun ProtectorStudioScreen(
             item {
                 ResourcesAndConfigAccordionCard(
                     profile = profile,
+                    isExplainMode = isExplainMode,
+                    onInspectFeature = onInspectFeature,
                     onUpdateProfile = onUpdateProfile,
                     onSelectAllLayers = onSelectAllLayers
                 )
@@ -691,30 +814,42 @@ fun ProtectorStudioScreen(
             // Primary Run Action
             item {
                 val isApkSelected = uiState.selectedInputName.lowercase().endsWith(".apk") && profile.signOutputApk
-                Button(
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onRunProtection()
-                    },
-                    enabled = !uiState.isProtecting,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(54.dp)
-                        .testTag("run_protection_pipeline_button")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Rounded.EnhancedEncryption, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = when {
-                            uiState.isProtecting -> "Encrypting & Signing..."
-                            isApkSelected -> "Protect & Sign Output APK"
-                            else -> "Encrypt & Build Protected Output"
+                    Button(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (isExplainMode) onInspectFeature(FeatureIds.PIPELINE_FORGE) else onRunProtection()
                         },
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                        enabled = !uiState.isProtecting,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(54.dp)
+                            .testTag("run_protection_pipeline_button")
+                    ) {
+                        Icon(Icons.Rounded.EnhancedEncryption, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = when {
+                                uiState.isProtecting -> "Encrypting & Signing..."
+                                isApkSelected -> strings.protectAndSignBtn
+                                else -> strings.encryptBuildBtn
+                            },
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            maxLines = 1
+                        )
+                    }
+                    ExplainInfoIconButton(
+                        contentDescription = "Explain Protect & Sign Pipeline",
+                        testTag = "info_pipeline_forge",
+                        onClick = { onInspectFeature(FeatureIds.PIPELINE_FORGE) }
                     )
                 }
             }
@@ -918,7 +1053,7 @@ fun ProtectorStudioScreen(
                                     .height(48.dp)
                                     .testTag("telegram_channel_button")
                             ) {
-                                Icon(Icons.Rounded.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("Telegram", maxLines = 1)
                             }

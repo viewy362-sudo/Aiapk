@@ -53,11 +53,13 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.i18n.FeatureIds
 import com.example.security.ApkInspectionReport
 import com.example.security.DexFileReport
 import com.example.security.ProtectionProfile
 import com.example.security.RuntimeShieldReport
 import com.example.ui.ShieldUiState
+import com.example.ui.components.ExplainInfoIconButton
 import com.example.ui.components.SecurityLayerCard
 import com.example.ui.components.ShieldScoreRing
 import com.example.ui.components.StatusPill
@@ -72,6 +74,7 @@ fun ShieldDashboardScreen(
     onRunAudit: () -> Unit,
     onPickApkOrZip: (android.net.Uri) -> Unit,
     onNavigateToKit: () -> Unit,
+    onInspectFeature: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val archivePicker = rememberLauncherForActivityResult(
@@ -97,6 +100,23 @@ fun ShieldDashboardScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Live Integrity Audit",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    ExplainInfoIconButton(
+                        contentDescription = "Explain Live Integrity Audit",
+                        testTag = "info_live_audit_tool",
+                        onClick = { onInspectFeature(FeatureIds.LIVE_AUDIT) }
+                    )
+                }
                 HeroProtectionBanner(
                     profile = profile,
                     runtime = runtime,

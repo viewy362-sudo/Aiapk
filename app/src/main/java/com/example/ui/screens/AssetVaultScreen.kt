@@ -40,8 +40,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.i18n.FeatureIds
 import com.example.ui.ShieldUiState
 import com.example.ui.VaultBinaryMode
+import com.example.ui.components.ExplainInfoIconButton
 import com.example.ui.components.MonospaceCodePanel
 import com.example.ui.components.StatusPill
 import com.example.ui.theme.JetBrainsMonoFamily
@@ -57,6 +59,7 @@ fun AssetVaultScreen(
     onProcessFile: (Uri, VaultBinaryMode) -> Unit,
     onSaveProcessedFile: (Uri) -> Unit,
     onCopiedNotice: (String) -> Unit,
+    onInspectFeature: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val encryptFilePicker = rememberLauncherForActivityResult(
@@ -89,11 +92,23 @@ fun AssetVaultScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {
-                Text(
-                    text = "AES-256-GCM Asset Vault",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "AES-256-GCM Asset Vault",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.weight(1f)
+                    )
+                    ExplainInfoIconButton(
+                        contentDescription = "Explain AES-256-GCM Asset Vault",
+                        testTag = "info_asset_vault_tool",
+                        onClick = { onInspectFeature(FeatureIds.ASSET_VAULT_TOOL) }
+                    )
+                }
                 Text(
                     text = "Encrypt JSON configs, media, or binary assets using PBKDF2-HMAC-SHA256 + 128-bit GCM authentication.",
                     style = MaterialTheme.typography.bodyMedium,

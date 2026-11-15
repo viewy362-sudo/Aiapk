@@ -46,6 +46,7 @@ fun SketchwareKitScreen(
     onAdoptDeviceCert: () -> Unit,
     onBuildExportBundle: () -> String,
     onCopiedNotice: (String) -> Unit,
+    onInspectFeature: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -67,11 +68,23 @@ fun SketchwareKitScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {
-                Text(
-                    text = "Sketchware Pro Protection Kit",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Sketchware Pro Protection Kit",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.weight(1f)
+                    )
+                    com.example.ui.components.ExplainInfoIconButton(
+                        contentDescription = "Explain Sketchware Pro Kit",
+                        testTag = "info_sketchware_kit_tool",
+                        onClick = { onInspectFeature(com.example.i18n.FeatureIds.SKETCHWARE_KIT) }
+                    )
+                }
                 Text(
                     text = "Configure your target app and export zero-dependency Dalvik/ART Java classes and R8/ProGuard rules.",
                     style = MaterialTheme.typography.bodyMedium,

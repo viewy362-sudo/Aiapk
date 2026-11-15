@@ -7,6 +7,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.SoundFxManager
 import com.example.data.ProtectionPreferences
+import com.example.i18n.AppLanguage
+import com.example.i18n.FeatureGuideCatalog
 import com.example.security.ApkCompatibilityAnalyzer
 import com.example.security.ApkInspectionReport
 import com.example.security.AppProtectorPipeline
@@ -87,6 +89,9 @@ data class ShieldUiState(
     val obfuscatorInput: String = "sk_live_bloody_team_sample_key",
     val obfuscatorMethodName: String = "getApiToken",
     val obfuscationResult: ObfuscatedStringResult? = null,
+    val isExplainMode: Boolean = false,
+    val inspectedFeatureId: String? = null,
+    val showFeatureGuide: Boolean = false,
     val statusToast: String? = null
 )
 
@@ -439,6 +444,40 @@ class DexShieldViewModel(application: Application) : AndroidViewModel(applicatio
         val next = AppThemePreset.randomDifferentFrom(profile.value.resolvedThemePreset)
         updateProfile { it.copy(themePresetName = next.name) }
         _uiState.update { it.copy(statusToast = "Random Design: ${next.displayName}") }
+    }
+
+    fun selectLanguage(language: AppLanguage) {
+        SoundFxManager.playToggle(true)
+        updateProfile { it.copy(languageCode = language.code) }
+        _uiState.update { it.copy(statusToast = "${language.nativeName} (${language.shortBadge})") }
+    }
+
+    fun toggleExplainMode() {
+        val next = !_uiState.value.isExplainMode
+        SoundFxManager.playToggle(next)
+        _uiState.update { it.copy(isExplainMode = next) }
+    }
+
+    fun inspectFeature(featureId: String) {
+        SoundFxManager.playClick()
+        _uiState.update { it.copy(inspectedFeatureId = featureId) }
+    }
+
+    fun dismissFeatureExplanation() {
+        SoundFxManager.playClick()
+        _uiState.update { it.copy(inspectedFeatureId = null) }
+    }
+
+    fun setShowFeatureGuide(show: Boolean) {
+        SoundFxManager.playClick()
+        _uiState.update { it.copy(showFeatureGuide = show) }
+    }
+
+    fun toggleFeatureById(featureId: String, enabled: Boolean) {
+        val spec = FeatureGuideCatalog.findById(featureId) ?: return
+        val apply = spec.applyToggle ?: return
+        SoundFxManager.playToggle(enabled)
+        updateProfile { apply(it, enabled) }
     }
 
     fun applyWallTier(tier: WallProtectionTier) {

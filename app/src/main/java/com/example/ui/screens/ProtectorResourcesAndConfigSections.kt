@@ -13,17 +13,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.audio.SoundFxManager
+import com.example.i18n.AppStrings
+import com.example.i18n.FeatureCatalogExtended.CfgIds
+import com.example.i18n.FeatureCatalogExtended.ResIds
+import com.example.i18n.FeatureIds
 import com.example.security.ProtectionProfile
 
 @Composable
 fun ResourcesConfusingSection(
     profile: ProtectionProfile,
+    isExplainMode: Boolean,
+    onInspectFeature: (String) -> Unit,
     onUpdateProfile: ((ProtectionProfile) -> ProtectionProfile) -> Unit
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
+    val strings = AppStrings.get(profile.resolvedLanguage)
 
     ExpandableSectionCard(
-        title = "Resources Confusing (${profile.selectedResourceConfuseCount}/16)",
+        title = "${strings.resourcesConfusingTitle} (${profile.selectedResourceConfuseCount}/16)",
         expanded = expanded,
         onToggleExpand = {
             SoundFxManager.playClick()
@@ -34,7 +41,10 @@ fun ResourcesConfusingSection(
             title = "Shrink Resources",
             subtitle = "Strict resource shrinker config (safe IDs kept for Sketchware APKs)",
             checked = profile.shrinkResources,
-            testTag = "res_shrink_all"
+            testTag = "res_shrink_all",
+            featureId = ResIds.SHRINK_RESOURCES,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkResources = c) } }
 
         OptionRow(
@@ -42,7 +52,10 @@ fun ResourcesConfusingSection(
             subtitle = "Applies R8/AAPT2 shrinking rules for res/anim/*",
             checked = profile.shrinkAnim,
             badge = "VIP",
-            testTag = "res_shrink_anim"
+            testTag = "res_shrink_anim",
+            featureId = ResIds.SHRINK_ANIM,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkAnim = c) } }
 
         OptionRow(
@@ -50,7 +63,10 @@ fun ResourcesConfusingSection(
             subtitle = "Confuses & shrinks res/drawable/* rules in Kit",
             checked = profile.shrinkDrawablesAndAnim,
             badge = "VIP",
-            testTag = "res_shrink_drawable"
+            testTag = "res_shrink_drawable",
+            featureId = ResIds.SHRINK_DRAWABLE,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkDrawablesAndAnim = c) } }
 
         OptionRow(
@@ -58,7 +74,10 @@ fun ResourcesConfusingSection(
             subtitle = "Confuses & prunes res/color/* rules in Kit",
             checked = profile.shrinkColor,
             badge = "VIP",
-            testTag = "res_shrink_color"
+            testTag = "res_shrink_color",
+            featureId = ResIds.SHRINK_COLOR,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkColor = c) } }
 
         OptionRow(
@@ -66,7 +85,10 @@ fun ResourcesConfusingSection(
             subtitle = "Confuses & prunes res/animator/* rules in Kit",
             checked = profile.shrinkAnimator,
             badge = "VIP",
-            testTag = "res_shrink_animator"
+            testTag = "res_shrink_animator",
+            featureId = ResIds.SHRINK_ANIMATOR,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkAnimator = c) } }
 
         OptionRow(
@@ -74,7 +96,10 @@ fun ResourcesConfusingSection(
             subtitle = "Confuses res/layout/* entries safely in Kit",
             checked = profile.shrinkLayoutsAndXml,
             badge = "VIP",
-            testTag = "res_shrink_layout"
+            testTag = "res_shrink_layout",
+            featureId = ResIds.SHRINK_LAYOUT,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkLayoutsAndXml = c) } }
 
         OptionRow(
@@ -82,7 +107,10 @@ fun ResourcesConfusingSection(
             subtitle = "Compresses & optimizes res/raw/* entries",
             checked = profile.shrinkRaw,
             badge = "VIP",
-            testTag = "res_shrink_raw"
+            testTag = "res_shrink_raw",
+            featureId = ResIds.SHRINK_RAW,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkRaw = c) } }
 
         OptionRow(
@@ -90,7 +118,10 @@ fun ResourcesConfusingSection(
             subtitle = "Optimizes & prunes res/font/* entries in Kit",
             checked = profile.shrinkFont,
             badge = "VIP",
-            testTag = "res_shrink_font"
+            testTag = "res_shrink_font",
+            featureId = ResIds.SHRINK_FONT,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkFont = c) } }
 
         OptionRow(
@@ -98,7 +129,10 @@ fun ResourcesConfusingSection(
             subtitle = "Prunes unused res/menu/* definitions in Kit",
             checked = profile.shrinkMenu,
             badge = "VIP",
-            testTag = "res_shrink_menu"
+            testTag = "res_shrink_menu",
+            featureId = ResIds.SHRINK_MENU,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkMenu = c) } }
 
         OptionRow(
@@ -106,7 +140,10 @@ fun ResourcesConfusingSection(
             subtitle = "Prunes redundant res/mipmap/* densities in Kit",
             checked = profile.shrinkMipmap,
             badge = "VIP",
-            testTag = "res_shrink_mipmap"
+            testTag = "res_shrink_mipmap",
+            featureId = ResIds.SHRINK_MIPMAP,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkMipmap = c) } }
 
         OptionRow(
@@ -114,7 +151,10 @@ fun ResourcesConfusingSection(
             subtitle = "Optimizes res/interpolator/* definitions in Kit",
             checked = profile.shrinkInterpolator,
             badge = "VIP",
-            testTag = "res_shrink_interpolator"
+            testTag = "res_shrink_interpolator",
+            featureId = ResIds.SHRINK_INTERPOLATOR,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkInterpolator = c) } }
 
         OptionRow(
@@ -122,7 +162,10 @@ fun ResourcesConfusingSection(
             subtitle = "Optimizes res/navigation/* graphs in Kit",
             checked = profile.shrinkNavigation,
             badge = "VIP",
-            testTag = "res_shrink_navigation"
+            testTag = "res_shrink_navigation",
+            featureId = ResIds.SHRINK_NAVIGATION,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkNavigation = c) } }
 
         OptionRow(
@@ -130,7 +173,10 @@ fun ResourcesConfusingSection(
             subtitle = "Optimizes res/transition/* sets in Kit",
             checked = profile.shrinkTransition,
             badge = "VIP",
-            testTag = "res_shrink_transition"
+            testTag = "res_shrink_transition",
+            featureId = ResIds.SHRINK_TRANSITION,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkTransition = c) } }
 
         OptionRow(
@@ -138,7 +184,10 @@ fun ResourcesConfusingSection(
             subtitle = "Confuses res/xml/* configuration entries in Kit",
             checked = profile.shrinkXml,
             badge = "VIP",
-            testTag = "res_shrink_xml"
+            testTag = "res_shrink_xml",
+            featureId = ResIds.SHRINK_XML,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkXml = c) } }
 
         OptionRow(
@@ -146,7 +195,10 @@ fun ResourcesConfusingSection(
             subtitle = "Flat AAPT2 resource XML shrinking pass",
             checked = profile.shrinkResourceXmlV1,
             badge = "VIP",
-            testTag = "res_shrink_xml_v1"
+            testTag = "res_shrink_xml_v1",
+            featureId = ResIds.SHRINK_XML_V1,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkResourceXmlV1 = c) } }
 
         OptionRow(
@@ -154,14 +206,20 @@ fun ResourcesConfusingSection(
             subtitle = "Deep attribute pruning pass (non-breaking in APK)",
             checked = profile.shrinkResourceXmlV2,
             badge = "VIP",
-            testTag = "res_shrink_xml_v2"
+            testTag = "res_shrink_xml_v2",
+            featureId = ResIds.SHRINK_XML_V2,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(shrinkResourceXmlV2 = c) } }
 
         OptionRow(
             title = "Strip Build & Debug Metadata (APK)",
             subtitle = "Removes DebugProbesKt.bin & Kotlin tooling metadata from APK",
             checked = profile.stripDebugMetadata,
-            testTag = "res_strip_debug"
+            testTag = "res_strip_debug",
+            featureId = ResIds.STRIP_DEBUG,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(stripDebugMetadata = c) } }
     }
 }
@@ -169,12 +227,15 @@ fun ResourcesConfusingSection(
 @Composable
 fun ConfigurationSection(
     profile: ProtectionProfile,
+    isExplainMode: Boolean,
+    onInspectFeature: (String) -> Unit,
     onUpdateProfile: ((ProtectionProfile) -> ProtectionProfile) -> Unit
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
+    val strings = AppStrings.get(profile.resolvedLanguage)
 
     ExpandableSectionCard(
-        title = "Configuration",
+        title = strings.configurationTitle,
         expanded = expanded,
         onToggleExpand = {
             SoundFxManager.playClick()
@@ -185,7 +246,10 @@ fun ConfigurationSection(
             title = "Add Custom Toast",
             subtitle = "Displays custom protection banner on APK launch",
             checked = profile.customSecurityToast,
-            testTag = "cfg_custom_toast"
+            testTag = "cfg_custom_toast",
+            featureId = CfgIds.CUSTOM_TOAST,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(customSecurityToast = c) } }
 
         if (profile.customSecurityToast) {
@@ -206,7 +270,10 @@ fun ConfigurationSection(
             subtitle = "Blocks HttpCanary, SSL Capture & packet sniffers",
             checked = profile.detectHttpCanary,
             badge = "VIP",
-            testTag = "cfg_httpcanary"
+            testTag = "cfg_httpcanary",
+            featureId = CfgIds.DETECT_HTTPCANARY,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(detectHttpCanary = c) } }
 
         OptionRow(
@@ -214,7 +281,10 @@ fun ConfigurationSection(
             subtitle = "Allows user to dismiss network or validation prompts",
             checked = profile.dialogCancelable,
             badge = "VIP",
-            testTag = "cfg_dialog_cancelable"
+            testTag = "cfg_dialog_cancelable",
+            featureId = CfgIds.DIALOG_CANCELABLE,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(dialogCancelable = c) } }
 
         OptionRow(
@@ -222,7 +292,10 @@ fun ConfigurationSection(
             subtitle = "Blocks QEMU, BlueStacks & emulator builds",
             checked = profile.emulatorCloneShield,
             badge = "VIP",
-            testTag = "cfg_detect_emulator"
+            testTag = "cfg_detect_emulator",
+            featureId = FeatureIds.EMULATOR_SHIELD,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(emulatorCloneShield = c) } }
 
         OptionRow(
@@ -230,7 +303,10 @@ fun ConfigurationSection(
             subtitle = "Requires active internet connection before launch",
             checked = profile.checkInternetRequired,
             badge = "VIP",
-            testTag = "cfg_check_net"
+            testTag = "cfg_check_net",
+            featureId = CfgIds.CHECK_INTERNET,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(checkInternetRequired = c) } }
 
         OptionRow(
@@ -238,7 +314,10 @@ fun ConfigurationSection(
             subtitle = "Bypasses strict VPN & proxy detection inside runtime",
             checked = profile.removeDetectVpnProxy,
             badge = "VIP",
-            testTag = "cfg_remove_vpn"
+            testTag = "cfg_remove_vpn",
+            featureId = CfgIds.REMOVE_DETECT_VPN,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(removeDetectVpnProxy = c) } }
 
         OptionRow(
@@ -246,7 +325,10 @@ fun ConfigurationSection(
             subtitle = "Allows traffic inspection without sniffer termination",
             checked = profile.removeDetectHttpCanary,
             badge = "VIP",
-            testTag = "cfg_remove_httpcanary"
+            testTag = "cfg_remove_httpcanary",
+            featureId = CfgIds.REMOVE_DETECT_CANARY,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(removeDetectHttpCanary = c) } }
 
         OptionRow(
@@ -254,7 +336,10 @@ fun ConfigurationSection(
             subtitle = "Blocks DualSpace, Parallel Space & virtual clone wrappers",
             checked = profile.removeBundlingSoftware,
             badge = "VIP",
-            testTag = "cfg_remove_bundling"
+            testTag = "cfg_remove_bundling",
+            featureId = CfgIds.REMOVE_BUNDLING_SW,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(removeBundlingSoftware = c) } }
 
         OptionRow(
@@ -262,7 +347,10 @@ fun ConfigurationSection(
             subtitle = "Guards window callbacks against forced update popups",
             checked = profile.removeUpdateAlertDialog,
             badge = "VIP",
-            testTag = "cfg_remove_update_dialog"
+            testTag = "cfg_remove_update_dialog",
+            featureId = CfgIds.REMOVE_UPDATE_DIALOG,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(removeUpdateAlertDialog = c) } }
 
         OptionRow(
@@ -270,7 +358,10 @@ fun ConfigurationSection(
             subtitle = "Masks root/test-keys checks so rooted devices can run",
             checked = profile.hideRoot,
             badge = "VIP",
-            testTag = "cfg_hide_root"
+            testTag = "cfg_hide_root",
+            featureId = CfgIds.HIDE_ROOT,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(hideRoot = c) } }
 
         OptionRow(
@@ -278,7 +369,10 @@ fun ConfigurationSection(
             subtitle = "Enforces FLAG_SECURE & blocks screen capture",
             checked = profile.screenTapjackingShield,
             badge = "VIP",
-            testTag = "cfg_anti_screenshots"
+            testTag = "cfg_anti_screenshots",
+            featureId = FeatureIds.SCREEN_TAPJACKING,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(screenTapjackingShield = c) } }
 
         OptionRow(
@@ -286,7 +380,10 @@ fun ConfigurationSection(
             subtitle = "Blocks active tun0/ppp0 VPN & HTTP proxy tunnels",
             checked = profile.sslPinningProxyBlock,
             badge = "VIP",
-            testTag = "cfg_detect_vpn_proxy"
+            testTag = "cfg_detect_vpn_proxy",
+            featureId = FeatureIds.SSL_VPN_BLOCK,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(sslPinningProxyBlock = c) } }
 
         OptionRow(
@@ -294,7 +391,10 @@ fun ConfigurationSection(
             subtitle = "Scans /proc/self/maps for Xposed, LSPosed & Frida",
             checked = profile.antiDebugFridaShield,
             badge = "VIP",
-            testTag = "cfg_detect_xposed"
+            testTag = "cfg_detect_xposed",
+            featureId = FeatureIds.ANTI_DEBUG_FRIDA,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(antiDebugFridaShield = c) } }
     }
 }
@@ -302,12 +402,15 @@ fun ConfigurationSection(
 @Composable
 fun AdvancedSettingsSection(
     profile: ProtectionProfile,
+    isExplainMode: Boolean,
+    onInspectFeature: (String) -> Unit,
     onUpdateProfile: ((ProtectionProfile) -> ProtectionProfile) -> Unit
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
+    val strings = AppStrings.get(profile.resolvedLanguage)
 
     ExpandableSectionCard(
-        title = "Advanced Settings",
+        title = strings.advancedSettingsTitle,
         expanded = expanded,
         onToggleExpand = {
             SoundFxManager.playClick()
@@ -319,7 +422,10 @@ fun AdvancedSettingsSection(
             subtitle = "Shows Bloody Team Access Token verification prompt on launch",
             checked = profile.loginValidateGate,
             badge = "VIP",
-            testTag = "adv_login_v1"
+            testTag = "adv_login_v1",
+            featureId = CfgIds.LOGIN_V1,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(loginValidateGate = c) } }
 
         OptionRow(
@@ -327,7 +433,10 @@ fun AdvancedSettingsSection(
             subtitle = "Shows dual-field User ID + VIP License Key authentication gate",
             checked = profile.loginValidateV2,
             badge = "VIP",
-            testTag = "adv_login_v2"
+            testTag = "adv_login_v2",
+            featureId = CfgIds.LOGIN_V2,
+            isExplainMode = isExplainMode,
+            onInspectFeature = onInspectFeature
         ) { c -> onUpdateProfile { it.copy(loginValidateV2 = c) } }
     }
 }

@@ -24,6 +24,7 @@ class ProtectionPreferences(private val context: Context) {
         val EXPECTED_SHA = stringPreferencesKey("expected_sha256")
         val DEX_DISGUISE = stringPreferencesKey("dex_disguise_ext")
         val THEME_PRESET = stringPreferencesKey("theme_preset_name")
+        val APP_LANGUAGE = stringPreferencesKey("app_language_code")
         val WALL_TIER = stringPreferencesKey("wall_protection_tier")
 
         // 10 Core Security Layers + Stub
@@ -87,6 +88,7 @@ class ProtectionPreferences(private val context: Context) {
             expectedSignatureSha256 = prefs[Keys.EXPECTED_SHA] ?: "",
             dexDisguiseExtension = prefs[Keys.DEX_DISGUISE] ?: ".png",
             themePresetName = prefs[Keys.THEME_PRESET] ?: AppThemePreset.CRIMSON_FORGE.name,
+            languageCode = prefs[Keys.APP_LANGUAGE] ?: "en",
             wallProtectionTier = prefs[Keys.WALL_TIER] ?: "",
             dexBytecodeGuard = prefs[Keys.LAYER_DEX] ?: false,
             assetAes256Encryption = prefs[Keys.LAYER_ASSET] ?: false,
@@ -141,6 +143,7 @@ class ProtectionPreferences(private val context: Context) {
             prefs[Keys.EXPECTED_SHA] = profile.expectedSignatureSha256
             prefs[Keys.DEX_DISGUISE] = profile.dexDisguiseExtension
             prefs[Keys.THEME_PRESET] = profile.themePresetName
+            prefs[Keys.APP_LANGUAGE] = profile.languageCode
             prefs[Keys.WALL_TIER] = profile.wallProtectionTier
             prefs[Keys.LAYER_DEX] = profile.dexBytecodeGuard
             prefs[Keys.LAYER_ASSET] = profile.assetAes256Encryption

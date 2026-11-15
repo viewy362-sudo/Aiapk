@@ -362,6 +362,21 @@ class SecurityEnginesUnitTest {
                 assertArrayEquals(origDex, unpackedDex)
             }
 
+            // Run real Android SDK zipalign & apksigner verification on generated Stub APK
+            val zipalignBin = File("/opt/android/sdk/build-tools/36.0.0/zipalign")
+            val apksignerBin = File("/opt/android/sdk/build-tools/36.0.0/apksigner")
+            if (zipalignBin.exists() && apksignerBin.exists()) {
+                val alignProc = ProcessBuilder(zipalignBin.absolutePath, "-c", "4", artifact.primaryOutputFile.absolutePath)
+                    .redirectErrorStream(true).start()
+                assertEquals("SDK zipalign verification must succeed", 0, alignProc.waitFor())
+
+                val signProc = ProcessBuilder(
+                    apksignerBin.absolutePath, "verify", "--min-sdk-version", "21",
+                    artifact.primaryOutputFile.absolutePath
+                ).redirectErrorStream(true).start()
+                assertEquals("SDK apksigner verification must succeed", 0, signProc.waitFor())
+            }
+
             // Also verify Wrapper-Stub mode (when DEX encryption is OFF but runtime guards are ON)
             val wrapperProfile = ProtectionProfile(
                 appName = "Bloody Team",
@@ -370,7 +385,10 @@ class SecurityEnginesUnitTest {
                 dexBytecodeGuard = false,
                 nativeJniStubPacking = false,
                 screenTapjackingShield = true,
-                loginValidateV2 = true
+                loginValidateV2 = true,
+                hideRoot = true,
+                removeBundlingSoftware = true,
+                shrinkAnim = true
             )
             val wrapperArtifact = AppProtectorPipeline.protectArchive(
                 context = context,
@@ -390,6 +408,23 @@ class SecurityEnginesUnitTest {
                 val dexEntries = wrapApk.entries().toList().count { it.name.matches(Regex("^classes\\d*\\.dex$")) }
                 assertTrue("Wrapper stub DEX must be appended as classesN.dex", dexEntries >= 2)
                 assertArrayEquals(stubDexBytes, wrapApk.getInputStream(wrapApk.getEntry("classes$dexEntries.dex")).readBytes())
+
+                val policyText = wrapApk.getInputStream(wrapApk.getEntry("assets/bloody_wall/protection_policy.json")).readBytes().toString(Charsets.UTF_8)
+                assertTrue(policyText.contains("\"loginValidateV2\": true"))
+                assertTrue(policyText.contains("\"hideRoot\": true"))
+                assertTrue(policyText.contains("\"removeBundlingSoftware\": true"))
+                assertTrue(policyText.contains("\"anim\""))
+            }
+            if (zipalignBin.exists() && apksignerBin.exists()) {
+                val alignWrap = ProcessBuilder(zipalignBin.absolutePath, "-c", "4", wrapperArtifact.primaryOutputFile.absolutePath)
+                    .redirectErrorStream(true).start()
+                assertEquals("Wrapper APK SDK zipalign verification must succeed", 0, alignWrap.waitFor())
+
+                val signWrap = ProcessBuilder(
+                    apksignerBin.absolutePath, "verify", "--min-sdk-version", "21",
+                    wrapperArtifact.primaryOutputFile.absolutePath
+                ).redirectErrorStream(true).start()
+                assertEquals("Wrapper APK SDK apksigner verification must succeed", 0, signWrap.waitFor())
             }
         }
     }
@@ -400,20 +435,27 @@ class SecurityEnginesUnitTest {
         "dex\n038\u0000".toByteArray(Charsets.US_ASCII).copyInto(fakeDex, 0)
         for (i in 8 until fakeDex.size) fakeDex[i] = (i and 0xFF).toByte()
 
-        val packed = DexPackerEngine.packDexEntry(
-            dexEntryName = "classes.dex",
-            dexBytes = fakeDex,
-            passphrase = "BloodyPass#99",
-            disguiseExtension = ".png",
-            index = 0
+        val expectedAssets = mapOf(
+            ".png" to "tex_atlas_0.png",
+            ".dat" to "font_metrics_0.dat",
+            ".bin" to "res_cache_0.bin"
         )
-        assertEquals("tex_atlas_0.png", packed.disguisedAssetName)
-        val unpacked = DexPackerEngine.unpackDexEntry(
-            packedBytes = packed.packedBytes,
-            passphrase = "BloodyPass#99",
-            index = 0
-        )
-        assertArrayEquals(fakeDex, unpacked)
+        for ((ext, expectedName) in expectedAssets) {
+            val packed = DexPackerEngine.packDexEntry(
+                dexEntryName = "classes.dex",
+                dexBytes = fakeDex,
+                passphrase = "BloodyPass#99_বাংলা",
+                disguiseExtension = ext,
+                index = 0
+            )
+            assertEquals(expectedName, packed.disguisedAssetName)
+            val unpacked = DexPackerEngine.unpackDexEntry(
+                packedBytes = packed.packedBytes,
+                passphrase = "BloodyPass#99_বাংলা",
+                index = 0
+            )
+            assertArrayEquals(fakeDex, unpacked)
+        }
 
         val profile = ProtectionProfile(appName = "Bloody Team", packageName = "com.bloodyteam.app")
         val cpp = DexPackerEngine.generateNativeJniCpp(profile)
@@ -534,5 +576,46 @@ class SecurityEnginesUnitTest {
                 error("boom")
             }
         )
+    }
+
+    @Test
+    fun featureGuideCatalogAndLanguagesAreComplete() {
+        val langs = com.example.i18n.AppLanguage.entries
+        assertTrue(langs.size >= 6)
+        assertTrue(langs.any { it.code == "en" })
+        assertTrue(langs.any { it.code == "bn" })
+        assertTrue(langs.any { it.code == "hi" })
+
+        for (lang in langs) {
+            val strings = com.example.i18n.AppStrings.get(lang)
+            assertTrue(strings.guideScreenTitle.isNotBlank())
+            assertTrue(strings.whatItDoesLabel.isNotBlank())
+            assertTrue(strings.howItWorksLabel.isNotBlank())
+            assertTrue(strings.safetyAndWhenLabel.isNotBlank())
+        }
+
+        val allSpecs = com.example.i18n.FeatureGuideCatalog.allFeatures
+        assertTrue("Expected at least 50 documented features", allSpecs.size >= 50)
+        val uniqueIds = allSpecs.map { it.id }.toSet()
+        assertEquals("Feature IDs must be unique", allSpecs.size, uniqueIds.size)
+
+        val base = ProtectionProfile()
+        for (spec in allSpecs) {
+            for (lang in langs) {
+                val exp = spec.explain(lang)
+                assertTrue("${spec.id} title missing for $lang", exp.title.isNotBlank())
+                assertTrue("${spec.id} whatItDoes missing for $lang", exp.whatItDoes.isNotBlank())
+                assertTrue("${spec.id} howItWorks missing for $lang", exp.howItWorks.isNotBlank())
+                assertTrue("${spec.id} whenToUse missing for $lang", exp.whenToUse.isNotBlank())
+            }
+            val checker = spec.isChecked
+            val toggler = spec.applyToggle
+            if (checker != null && toggler != null) {
+                val enabled = toggler(base, true)
+                assertTrue("${spec.id} should enable", checker(enabled))
+                val disabled = toggler(enabled, false)
+                assertFalse("${spec.id} should disable", checker(disabled))
+            }
+        }
     }
 }
