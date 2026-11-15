@@ -132,10 +132,14 @@ object ApkSignerEngine {
             }
         }
 
+        // Post-1980 DOS timestamp (2020-01-01 00:00:00 UTC) prevents OpenJDK ZipOutputStream
+        // from prepending 9-byte 'UT' extended-timestamp extra headers that shift ZipAlign offsets.
+        val dosSafeTimestampMs = 1577836800000L
+
         // Step 1: Write ZipAligned entries + compute SHA-256 digests for MANIFEST.MF
         val v1Baos = ByteArrayOutputStream(maxOf(64 * 1024, cleanEntries.sumOf { it.bytes.size }))
         val countingOut = CountingOutputStream(v1Baos)
-        val manifestSections = StringBuilder()
+        val rawManifestEntries = ArrayList<String>(cleanEntries.size)
 
         ZipOutputStream(countingOut).use { zos ->
             for (item in cleanEntries) {
@@ -145,7 +149,7 @@ object ApkSignerEngine {
                     lower == "resources.arsc" ||
                     (lower.startsWith("lib/") && lower.endsWith(".so"))
 
-                val zipEntry = ZipEntry(entryName).apply { time = 0L }
+                val zipEntry = ZipEntry(entryName).apply { time = dosSafeTimestampMs }
 
                 if (isStored) {
                     val alignment = if (lower.endsWith(".so")) 4096 else 4
@@ -155,7 +159,6 @@ object ApkSignerEngine {
                     zipEntry.compressedSize = item.bytes.size.toLong()
                     zipEntry.crc = crc
 
-                    // ZipOutputStream writes 30-byte local header + nameBytes + extraBytes right before payload
                     zos.flush()
                     val nameLen = entryName.toByteArray(Charsets.UTF_8).size
                     val basePayloadOffset = countingOut.bytesWritten + 30L + nameLen
@@ -173,15 +176,17 @@ object ApkSignerEngine {
                 zos.closeEntry()
 
                 val entryDigestB64 = sha256Base64(item.bytes)
-                manifestSections.append("Name: ").append(entryName).append("\r\n")
-                manifestSections.append("SHA-256-Digest: ").append(entryDigestB64).append("\r\n\r\n")
+                val entryBlock = wrapManifestLine("Name: $entryName") +
+                    "\r\nSHA-256-Digest: $entryDigestB64\r\n\r\n"
+                rawManifestEntries.add(entryBlock)
             }
 
             // Build MANIFEST.MF
             val manifestHeader = "Manifest-Version: 1.0\r\nCreated-By: Bloody Team APK Signer 2.0\r\n\r\n"
-            val manifestBytes = (manifestHeader + manifestSections.toString()).toByteArray(Charsets.UTF_8)
+            val manifestBody = rawManifestEntries.joinToString("")
+            val manifestBytes = (manifestHeader + manifestBody).toByteArray(Charsets.UTF_8)
 
-            zos.putNextEntry(ZipEntry("META-INF/MANIFEST.MF").apply { time = 0L })
+            zos.putNextEntry(ZipEntry("META-INF/MANIFEST.MF").apply { time = dosSafeTimestampMs })
             zos.write(manifestBytes)
             zos.closeEntry()
 
@@ -192,17 +197,15 @@ object ApkSignerEngine {
             sfBuilder.append("SHA-256-Digest-Manifest: ").append(sha256Base64(manifestBytes)).append("\r\n")
             sfBuilder.append("X-Android-APK-Signed: 2\r\n\r\n")
 
-            val sectionRegex = Regex("Name: [^\\r\\n]+\\r\\nSHA-256-Digest: [^\\r\\n]+\\r\\n\\r\\n")
-            for (match in sectionRegex.findAll(manifestSections.toString())) {
-                val sectionText = match.value
-                val nameLine = sectionText.substringBefore("\r\n")
+            for (sectionText in rawManifestEntries) {
+                val nameHeader = sectionText.substringBefore("\r\nSHA-256-Digest:")
                 val sectionDigestB64 = sha256Base64(sectionText.toByteArray(Charsets.UTF_8))
-                sfBuilder.append(nameLine).append("\r\n")
+                sfBuilder.append(nameHeader).append("\r\n")
                 sfBuilder.append("SHA-256-Digest: ").append(sectionDigestB64).append("\r\n\r\n")
             }
             val certSfBytes = sfBuilder.toString().toByteArray(Charsets.UTF_8)
 
-            zos.putNextEntry(ZipEntry("META-INF/CERT.SF").apply { time = 0L })
+            zos.putNextEntry(ZipEntry("META-INF/CERT.SF").apply { time = dosSafeTimestampMs })
             zos.write(certSfBytes)
             zos.closeEntry()
 
@@ -213,7 +216,7 @@ object ApkSignerEngine {
                 certificate = identity.certificate,
                 certDerBytes = identity.certDerBytes
             )
-            zos.putNextEntry(ZipEntry("META-INF/CERT.RSA").apply { time = 0L })
+            zos.putNextEntry(ZipEntry("META-INF/CERT.RSA").apply { time = dosSafeTimestampMs })
             zos.write(pkcs7Bytes)
             zos.closeEntry()
         }
@@ -686,6 +689,27 @@ object ApkSignerEngine {
             }
         }
         return derTag(0x06, out.toByteArray())
+    }
+
+    private fun wrapManifestLine(line: String): String {
+        val utf8 = line.toByteArray(Charsets.UTF_8)
+        if (utf8.size <= 70) return line
+        val sb = StringBuilder()
+        var pos = 0
+        var first = true
+        while (pos < utf8.size) {
+            val maxBytes = if (first) 70 else 69
+            var end = minOf(utf8.size, pos + maxBytes)
+            // Back off to valid UTF-8 boundary
+            while (end > pos && end < utf8.size && (utf8[end].toInt() and 0xC0) == 0x80) {
+                end--
+            }
+            if (!first) sb.append("\r\n ")
+            sb.append(String(utf8, pos, end - pos, Charsets.UTF_8))
+            pos = end
+            first = false
+        }
+        return sb.toString()
     }
 
     private fun sha256Base64(bytes: ByteArray): String =

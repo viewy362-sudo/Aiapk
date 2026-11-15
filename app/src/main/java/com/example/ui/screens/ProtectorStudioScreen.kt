@@ -364,6 +364,48 @@ fun ProtectorStudioScreen(
                                                 )
                                             }
                                         }
+
+                                        Surface(
+                                            shape = MaterialTheme.shapes.small,
+                                            color = MaterialTheme.colorScheme.surfaceContainer,
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = "Asset & Data File Encryption",
+                                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Text(
+                                                        text = if (info.assetEntriesCount > 0 || info.dataFileEntriesCount > 0) {
+                                                            "Found ${info.assetEntriesCount} asset(s) & ${info.dataFileEntriesCount} data file(s) — toggle ON/OFF as needed"
+                                                        } else {
+                                                            "No asset files found — keep OFF or toggle ON for Kit"
+                                                        },
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Switch(
+                                                    checked = profile.assetAes256Encryption,
+                                                    onCheckedChange = { c ->
+                                                        SoundFxManager.playToggle(c)
+                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        onUpdateProfile { it.copy(assetAes256Encryption = c) }
+                                                    },
+                                                    modifier = Modifier.testTag("quick_asset_encryption_switch")
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }

@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 private val Context.protectionDataStore: DataStore<Preferences> by preferencesDataStore(
-    name = "dexshield_profile"
+    name = "dexshield_profile_v2"
 )
 
 class ProtectionPreferences(private val context: Context) {
@@ -59,29 +59,29 @@ class ProtectionPreferences(private val context: Context) {
             expectedSignatureSha256 = prefs[Keys.EXPECTED_SHA] ?: "",
             dexDisguiseExtension = prefs[Keys.DEX_DISGUISE] ?: ".png",
             themePresetName = prefs[Keys.THEME_PRESET] ?: AppThemePreset.CRIMSON_FORGE.name,
-            wallProtectionTier = prefs[Keys.WALL_TIER] ?: WallProtectionTier.WALL_V4_FORTRESS.name,
-            dexBytecodeGuard = prefs[Keys.LAYER_DEX] ?: true,
-            assetAes256Encryption = prefs[Keys.LAYER_ASSET] ?: true,
-            antiTamperSignature = prefs[Keys.LAYER_TAMPER] ?: true,
-            antiDebugFridaShield = prefs[Keys.LAYER_ANTIDEBUG] ?: true,
-            stringMetadataObfuscation = prefs[Keys.LAYER_OBFUSCATE] ?: true,
-            zeroCrashExceptionGuard = prefs[Keys.LAYER_ZEROCRASH] ?: true,
-            rootMagiskDetection = prefs[Keys.LAYER_ROOT] ?: true,
-            emulatorCloneShield = prefs[Keys.LAYER_EMULATOR] ?: true,
-            sslPinningProxyBlock = prefs[Keys.LAYER_SSL_PROXY] ?: true,
-            screenTapjackingShield = prefs[Keys.LAYER_SCREEN_SECURE] ?: true,
-            nativeJniStubPacking = prefs[Keys.NATIVE_JNI_STUB] ?: true,
-            shrinkResources = prefs[Keys.SHRINK_RESOURCES] ?: true,
-            shrinkDrawablesAndAnim = prefs[Keys.SHRINK_DRAWABLES] ?: true,
-            shrinkLayoutsAndXml = prefs[Keys.SHRINK_LAYOUTS] ?: true,
-            stripDebugMetadata = prefs[Keys.STRIP_DEBUG] ?: true,
-            detectHttpCanary = prefs[Keys.DETECT_HTTPCANARY] ?: true,
-            customSecurityToast = prefs[Keys.CUSTOM_TOAST] ?: true,
+            wallProtectionTier = prefs[Keys.WALL_TIER] ?: WallProtectionTier.WALL_V1_STANDARD.name,
+            dexBytecodeGuard = prefs[Keys.LAYER_DEX] ?: false,
+            assetAes256Encryption = prefs[Keys.LAYER_ASSET] ?: false,
+            antiTamperSignature = prefs[Keys.LAYER_TAMPER] ?: false,
+            antiDebugFridaShield = prefs[Keys.LAYER_ANTIDEBUG] ?: false,
+            stringMetadataObfuscation = prefs[Keys.LAYER_OBFUSCATE] ?: false,
+            zeroCrashExceptionGuard = prefs[Keys.LAYER_ZEROCRASH] ?: false,
+            rootMagiskDetection = prefs[Keys.LAYER_ROOT] ?: false,
+            emulatorCloneShield = prefs[Keys.LAYER_EMULATOR] ?: false,
+            sslPinningProxyBlock = prefs[Keys.LAYER_SSL_PROXY] ?: false,
+            screenTapjackingShield = prefs[Keys.LAYER_SCREEN_SECURE] ?: false,
+            nativeJniStubPacking = prefs[Keys.NATIVE_JNI_STUB] ?: false,
+            shrinkResources = prefs[Keys.SHRINK_RESOURCES] ?: false,
+            shrinkDrawablesAndAnim = prefs[Keys.SHRINK_DRAWABLES] ?: false,
+            shrinkLayoutsAndXml = prefs[Keys.SHRINK_LAYOUTS] ?: false,
+            stripDebugMetadata = prefs[Keys.STRIP_DEBUG] ?: false,
+            detectHttpCanary = prefs[Keys.DETECT_HTTPCANARY] ?: false,
+            customSecurityToast = prefs[Keys.CUSTOM_TOAST] ?: false,
             customToastMessage = prefs[Keys.CUSTOM_TOAST_MSG] ?: "Secured by Bloody Team",
             dialogCancelable = prefs[Keys.DIALOG_CANCELABLE] ?: false,
             checkInternetRequired = prefs[Keys.CHECK_INTERNET] ?: false,
             loginValidateGate = prefs[Keys.LOGIN_VALIDATE] ?: false,
-            signOutputApk = prefs[Keys.SIGN_OUTPUT_APK] ?: true,
+            signOutputApk = prefs[Keys.SIGN_OUTPUT_APK] ?: false,
             signerCommonName = prefs[Keys.SIGNER_CN] ?: "Bloody Team",
             signerOrg = prefs[Keys.SIGNER_ORG] ?: "Bloody Team Security"
         )

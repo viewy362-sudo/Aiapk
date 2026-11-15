@@ -39,7 +39,9 @@ import java.util.List;
 
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
+import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 
 import dalvik.system.DexClassLoader;
@@ -207,10 +209,33 @@ public class BloodyStubApplication extends Application {
             }
         }
 
+        enableHiddenApiExemption();
         unpackedClassLoader = loader;
         swapLoadedApkClassLoader(base, loader);
         injectDexElementsIntoBaseLoader(baseLoader, loader);
         Thread.currentThread().setContextClassLoader(loader);
+    }
+
+    /**
+     * Exempts non-SDK hidden API restrictions on Android 9-16 (targetSdk >= 29-36)
+     * via boot-loader meta-reflection so LoadedApk.mClassLoader, DexPathList.dexElements,
+     * and ActivityThread handover work without NoSuchFieldException crashes.
+     */
+    private static void enableHiddenApiExemption() {
+        if (Build.VERSION.SDK_INT < 28) return;
+        try {
+            Method forName = Class.class.getDeclaredMethod("forName", String.class);
+            Method getDeclaredMethod = Class.class.getDeclaredMethod("getDeclaredMethod", String.class, Class[].class);
+            Class<?> vmRuntimeClass = (Class<?>) forName.invoke(null, "dalvik.system.VMRuntime");
+            Method getRuntime = (Method) getDeclaredMethod.invoke(vmRuntimeClass, "getRuntime", new Class[0]);
+            Method setExemptions = (Method) getDeclaredMethod.invoke(
+                    vmRuntimeClass,
+                    "setHiddenApiExemptions",
+                    new Class[]{String[].class}
+            );
+            Object runtime = getRuntime.invoke(null);
+            setExemptions.invoke(runtime, new Object[]{new String[]{"L"}});
+        } catch (Throwable ignored) {}
     }
 
     private void swapLoadedApkClassLoader(Context base, ClassLoader newLoader) {
@@ -468,6 +493,17 @@ public class BloodyStubApplication extends Application {
     }
 
     private static byte[] pbkdf2Sha256(byte[] pw, byte[] salt, int iters, int len) throws Exception {
+        char[] chars = new char[pw.length];
+        for (int i = 0; i < pw.length; i++) {
+            chars[i] = (char) (pw[i] & 0xFF);
+        }
+        if (Build.VERSION.SDK_INT >= 26) {
+            try {
+                SecretKeyFactory skf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+                PBEKeySpec spec = new PBEKeySpec(chars, salt, iters, len * 8);
+                return skf.generateSecret(spec).getEncoded();
+            } catch (Throwable ignored) {}
+        }
         Mac mac = Mac.getInstance("HmacSHA256");
         mac.init(new SecretKeySpec(pw, "HmacSHA256"));
         byte[] out = new byte[len];

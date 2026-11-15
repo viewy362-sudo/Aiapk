@@ -87,11 +87,33 @@ class SecurityEnginesUnitTest {
     }
 
     @Test
+    fun initialProtectionProfileStartsAllOff() {
+        val fresh = ProtectionProfile()
+        assertEquals(0, fresh.enabledLayersCount)
+        assertFalse(fresh.dexBytecodeGuard)
+        assertFalse(fresh.assetAes256Encryption)
+        assertFalse(fresh.nativeJniStubPacking)
+        assertFalse(fresh.signOutputApk)
+        assertFalse(fresh.shrinkResources)
+    }
+
+    @Test
     fun sketchwareKitGeneratorIncludesAll10Layers() {
         val profile = ProtectionProfile(
             appName = "BLOODY TEAM",
             packageName = "com.bloodyteam.app",
-            expectedSignatureSha256 = "AA:BB:CC"
+            expectedSignatureSha256 = "AA:BB:CC",
+            dexBytecodeGuard = true,
+            assetAes256Encryption = true,
+            antiTamperSignature = true,
+            antiDebugFridaShield = true,
+            stringMetadataObfuscation = true,
+            zeroCrashExceptionGuard = true,
+            rootMagiskDetection = true,
+            emulatorCloneShield = true,
+            sslPinningProxyBlock = true,
+            screenTapjackingShield = true,
+            shrinkResources = true
         )
         val java = SketchwareKitGenerator.generateSketchwareJavaGuard(profile, "DEAD1234")
         val ssl = SketchwareKitGenerator.generateSslPinningJava(profile)
@@ -119,7 +141,17 @@ class SecurityEnginesUnitTest {
             zos.closeEntry()
         }
 
-        val profile = ProtectionProfile(appName = "BLOODY TEAM", packageName = "com.bloodyteam.app")
+        val profile = ProtectionProfile(
+            appName = "BLOODY TEAM",
+            packageName = "com.bloodyteam.app",
+            dexBytecodeGuard = true,
+            assetAes256Encryption = true,
+            antiTamperSignature = true,
+            stringMetadataObfuscation = true,
+            zeroCrashExceptionGuard = true,
+            sslPinningProxyBlock = true,
+            nativeJniStubPacking = true
+        )
         val artifact = AppProtectorPipeline.protectArchive(
             context = context,
             inputUri = Uri.fromFile(inputZip),
@@ -192,6 +224,12 @@ class SecurityEnginesUnitTest {
         val profile = ProtectionProfile(
             appName = "Bloody Team",
             packageName = "com.bloodyteam.demo",
+            dexBytecodeGuard = true,
+            assetAes256Encryption = true,
+            antiTamperSignature = true,
+            stringMetadataObfuscation = true,
+            zeroCrashExceptionGuard = true,
+            nativeJniStubPacking = true,
             signOutputApk = true,
             stripDebugMetadata = true
         )
